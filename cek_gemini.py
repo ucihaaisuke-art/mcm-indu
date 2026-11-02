@@ -9,9 +9,7 @@ def safe_error(response, key):
     try:
         error = response.json().get("error", {})
         status = str(error.get("status", ""))
-        message = str(
-            error.get("message", "Tidak ada rincian error.")
-        )
+        message = str(error.get("message", "Tidak ada rincian error."))
     except (ValueError, AttributeError, TypeError):
         message = "Respons tidak berisi rincian JSON dari API."
 
@@ -33,6 +31,7 @@ def safe_error(response, key):
         text,
     )
     text = re.sub(r"https?://\S+", "[URL]", text)
+
     return " ".join(text.split())[:480]
 
 
@@ -40,9 +39,7 @@ def fallback_models(data, current):
     choices = []
 
     for item in data.get("models", []):
-        name = item.get(
-            "name", ""
-        ).removeprefix("models/")
+        name = item.get("name", "").removeprefix("models/")
 
         if (
             "generateContent"
@@ -67,9 +64,7 @@ def fallback_models(data, current):
         set(choices),
         key=lambda name: (
             "lite" in name,
-            tuple(
-                int(n) for n in re.findall(r"\d+", name)
-            ),
+            tuple(int(n) for n in re.findall(r"\d+", name)),
             name,
         ),
         reverse=True,
@@ -77,9 +72,7 @@ def fallback_models(data, current):
 
 
 def main():
-    key = os.environ.get(
-        "GEMINI_API_KEY", ""
-    ).strip()
+    key = os.environ.get("GEMINI_API_KEY", "").strip()
 
     current = os.environ.get(
         "MCM_AI_MODEL", "gemini-flash-latest"
@@ -107,8 +100,7 @@ def main():
         timeout=20,
     ) as client:
         response = client.get(
-            "models",
-            params={"pageSize": 1000},
+            "models", params={"pageSize": 1000}
         )
 
         print(
@@ -127,20 +119,32 @@ def main():
         )
 
         for model in models:
-            response = client.post(
-                f"models/{model}:generateContent",
-                json={
-                    "contents": [{
-                        "role": "user",
-                        "parts": [{
-                            "text": "Balas hanya: OK"
+            print("Mencoba model:", model, flush=True)
+
+            try:
+                response = client.post(
+                    f"models/{model}:generateContent",
+                    json={
+                        "contents": [{
+                            "role": "user",
+                            "parts": [{"text": "Balas hanya: OK"}],
                         }],
-                    }],
-                    "generationConfig": {
-                        "maxOutputTokens": 1024
+                        "generationConfig": {
+                            "maxOutputTokens": 1024,
+                        },
                     },
-                },
-            )
+                    timeout=15,
+                )
+
+            except httpx.HTTPError as error:
+                print(
+                    model,
+                    "->",
+                    type(error).__name__,
+                    "; lanjut ke model berikutnya.",
+                    flush=True,
+                )
+                continue
 
             if response.status_code != 200:
                 print(
@@ -150,21 +154,14 @@ def main():
                     flush=True,
                 )
 
-                if response.status_code in (
-                    400, 401, 403, 429
-                ):
+                if response.status_code in (400, 401, 403, 429):
                     return
 
                 continue
 
-            candidates = response.json().get(
-                "candidates", []
-            )
-
+            candidates = response.json().get("candidates", [])
             parts = (
-                candidates[0].get(
-                    "content", {}
-                ).get("parts", [])
+                candidates[0].get("content", {}).get("parts", [])
                 if candidates
                 else []
             )
@@ -177,14 +174,9 @@ def main():
             ).strip()
 
             if text:
+                print(model, "-> BERHASIL", flush=True)
                 print(
-                    model,
-                    "-> BERHASIL",
-                    flush=True,
-                )
-                print(
-                    "Model yang berhasil:",
-                    model,
+                    "Model yang berhasil:", model,
                     flush=True,
                 )
                 print(
@@ -199,9 +191,7 @@ def main():
                 flush=True,
             )
 
-        print(
-            "Belum ada model yang berhasil pada pemeriksaan ini."
-        )
+        print("Belum ada model yang berhasil pada pemeriksaan ini.")
 
 
 if __name__ == "__main__":
@@ -214,7 +204,4 @@ if __name__ == "__main__":
         TypeError,
         KeyError,
     ) as error:
-        print(
-            "Pemeriksaan terhenti:",
-            type(error).__name__,
-        )
+        print("Pemeriksaan terhenti:", type(error).__name__)
