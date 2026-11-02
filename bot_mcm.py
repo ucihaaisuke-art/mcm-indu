@@ -74,6 +74,85 @@ def media_requested(text):
     return bool(media and action)
 
 
+def question_like(text):
+    return (
+        "?" in text
+        or media_requested(text)
+        or bool(re.search(
+            r"\b(apa|siapa|kenapa|gimana|bagaimana|kapan|mana|dimana|berapa|kok|"
+            r"gmn|knp|kpn|dmn|brp)\b|"
+            r"\b(bisa|boleh)\s+(tolong|minta|bantu|kirim|share|upload)\b|"
+            r"\bada\b.*\b(ga|gak|nggak|belum)\b",
+            text.lower(),
+        ))
+    )
+
+
+def social_reply(text):
+    if re.search(
+        r"\b(?:bt(?:\s*(?:grup|group|gc)(?:nya)?)?|"
+        r"barter(?:\s*(?:grup|group|gc))?)\b",
+        text,
+        re.IGNORECASE,
+    ):
+        return "Bt apa sih bang?"
+
+    greeting = re.match(
+        r"^\s*(?:@\w+\s+)?"
+        r"(?:(?:min|admin|ler|bang|bro)[\s,:!.-]+)?"
+        r"(?:selamat\s+)?"
+        r"(?:halo|hallo|helo|hello|hai|hay|hi|hy|hey|hei|yo|oy|woi|"
+        r"ass?alamu['’\s-]*alaikum|salam|permisi|pagi|siang|sore|malam)\b",
+        text,
+        re.IGNORECASE,
+    )
+
+    if greeting:
+        tail = re.sub(
+            r"\bapa\s+kabar\b",
+            "",
+            text[greeting.end():],
+            flags=re.IGNORECASE,
+        )
+        tail = re.sub(
+            r"\b(min|admin|ler|bang|bro|gan|guys|semua)\b",
+            "",
+            tail,
+            flags=re.IGNORECASE,
+        ).strip(" \t\n!?,.")
+
+        if (
+            not question_like(tail)
+            and not re.search(
+                r"\b(bisa|boleh|ada|tolong|kirim|upload|share)\b",
+                tail,
+                re.IGNORECASE,
+            )
+        ):
+            return random.choice((
+                "Halo juga ler! Lagi ngapain nih? 😎",
+                "Yo ler, nongol juga lu. Ada yang mau ditanyain? 😄",
+                "Halo bang! Lagi cari tontonan atau mau ngobrol nih? 🎬",
+            ))
+
+    if re.fullmatch(
+        r"\s*(min|admin|bot|mcm)"
+        r"(?:\s+(ler|bang|bro|gan))?[\s!?.]*",
+        text,
+        re.IGNORECASE,
+    ):
+        return "Yo ler, ada yang mau ditanyain?"
+
+    if re.fullmatch(
+        r"\s*p\s*(min|admin|ler|bang|bro)?[\s!?.]*",
+        text,
+        re.IGNORECASE,
+    ):
+        return "Yo ler, ada apa nih? 😎"
+
+    return None
+
+
 @dataclass(frozen=True)
 class Settings:
     backup_url: str = "https://anggur.site/makcombackinduk"
@@ -507,7 +586,11 @@ class CommunityBot:
         self.media_lock = asyncio.Lock()
         self.next_media_time = 0
         self.history = {}
-        self.ai_pending = set()
+        self.ai_pending = {}
+        self.last_user_reply = {}
+        self.queued_replies = {}
+        self.outgoing_locks = {}
+        self.next_outgoing = {}
 
         self.ai = (
             GeminiChat(
@@ -568,7 +651,6 @@ class CommunityBot:
             self.clock() + 30,
             result,
         )
-
         return result
 
     async def moderate(self, update, context):
@@ -669,13 +751,11 @@ class CommunityBot:
             await message.reply_text(
                 f"ID akun kamu: {message.from_user.id}"
             )
-
         elif await self.admin_status(message, context) is True:
             await message.reply_text(
                 f"ID grup: {message.chat.id}\n"
                 "Salin lengkap termasuk tanda minus."
             )
-
         else:
             await message.reply_text(
                 "Minta admin grup yang menjalankan /id ya, ler."
@@ -829,7 +909,6 @@ class CommunityBot:
             self.albums[key]["ids"].add(
                 message.message_id
             )
-
         else:
             context.application.create_task(
                 self.send_media(
@@ -869,7 +948,6 @@ class CommunityBot:
                     target,
                     self.settings.owner_id,
                 )
-
                 bot_member = await context.bot.get_chat_member(
                     target,
                     context.bot.id,
@@ -892,41 +970,11 @@ class CommunityBot:
                     )
                     return
 
-                delay = self.next_media_time - self.clock()
-
-                if delay > 0:
-                    await asyncio.sleep(delay)
-
-                for attempt in range(2):
-                    try:
-                        copied = await context.bot.copy_messages(
-                            chat_id=target,
-                            from_chat_id=message.chat.id,
-                            message_ids=sorted(set(message_ids)),
-                        )
-                        break
-
-                    except RetryAfter as error:
-                        wait = error.retry_after
-                        wait = (
-                            wait.total_seconds()
-                            if hasattr(wait, "total_seconds")
-                            else float(wait)
-                        )
-
-                        self.next_media_time = max(
-                            self.next_media_time,
-                            self.clock() + wait + 1,
-                        )
-
-                        if attempt or wait > 45:
-                            raise
-
-                        await asyncio.sleep(wait + 1)
-
-                self.next_media_time = (
-                    self.clock()
-                    + 3.5 * max(len(copied), 1)
+                copied = await self.copy_media_to_group(
+                    message,
+                    message_ids,
+                    context,
+                    target,
                 )
 
                 if not copied:
@@ -968,7 +1016,6 @@ class CommunityBot:
                         "sebelum mengulang; medianya mungkin "
                         "sudah terkirim, ler."
                     )
-
                 elif isinstance(error, RetryAfter):
                     text = (
                         "Telegram sedang membatasi kiriman. "
@@ -979,6 +1026,126 @@ class CommunityBot:
                     await message.reply_text(text)
                 except TelegramError:
                     pass
+
+    async def wait_outgoing(self, chat_id):
+        next_time = self.next_outgoing.get(chat_id, 0)
+
+        if chat_id == self.settings.target_group_id:
+            next_time = max(
+                next_time,
+                self.next_media_time,
+            )
+
+        delay = next_time - self.clock()
+
+        if delay > 0:
+            await asyncio.sleep(delay)
+
+    def record_wait(self, chat_id, seconds):
+        self.next_outgoing[chat_id] = max(
+            self.next_outgoing.get(chat_id, 0),
+            self.clock() + seconds,
+        )
+
+        if chat_id == self.settings.target_group_id:
+            self.next_media_time = max(
+                self.next_media_time,
+                self.next_outgoing[chat_id],
+            )
+
+    async def send_group_text(self, message, text, **kwargs):
+        chat_id = message.chat.id
+
+        lock = self.outgoing_locks.setdefault(
+            chat_id,
+            asyncio.Lock(),
+        )
+
+        async with lock:
+            await self.wait_outgoing(chat_id)
+
+            if not self.chatter_overrides.get(
+                chat_id,
+                self.settings.chatter_enabled,
+            ):
+                return None
+
+            try:
+                for attempt in range(2):
+                    try:
+                        return await message.reply_text(
+                            text,
+                            **kwargs,
+                        )
+
+                    except RetryAfter as error:
+                        wait = error.retry_after
+                        wait = (
+                            wait.total_seconds()
+                            if hasattr(wait, "total_seconds")
+                            else float(wait)
+                        )
+
+                        self.record_wait(
+                            chat_id,
+                            wait + 1,
+                        )
+
+                        if attempt or wait > 45:
+                            raise
+
+                        await asyncio.sleep(wait + 1)
+
+            finally:
+                self.record_wait(chat_id, 3.5)
+
+    async def copy_media_to_group(
+        self,
+        message,
+        message_ids,
+        context,
+        target,
+    ):
+        lock = self.outgoing_locks.setdefault(
+            target,
+            asyncio.Lock(),
+        )
+
+        async with lock:
+            await self.wait_outgoing(target)
+
+            for attempt in range(2):
+                try:
+                    copied = await context.bot.copy_messages(
+                        chat_id=target,
+                        from_chat_id=message.chat.id,
+                        message_ids=sorted(set(message_ids)),
+                    )
+
+                    self.record_wait(
+                        target,
+                        3.5 * max(len(copied), 1),
+                    )
+
+                    return copied
+
+                except RetryAfter as error:
+                    wait = error.retry_after
+                    wait = (
+                        wait.total_seconds()
+                        if hasattr(wait, "total_seconds")
+                        else float(wait)
+                    )
+
+                    self.record_wait(
+                        target,
+                        wait + 1,
+                    )
+
+                    if attempt or wait > 45:
+                        raise
+
+                    await asyncio.sleep(wait + 1)
 
     async def greet(self, chat_id, users, context):
         if not self.settings.welcome_enabled:
@@ -1093,6 +1260,8 @@ class CommunityBot:
         if sensitive:
             return
 
+        social = social_reply(text)
+
         if message.chat.id not in self.history:
             if len(self.history) >= 1000:
                 self.history.pop(next(iter(self.history)))
@@ -1120,13 +1289,14 @@ class CommunityBot:
         )
 
         question = (
-            media_requested(text)
-            or "?" in text
-            or bool(re.search(
-                r"\b(apa|kenapa|gimana|bagaimana|kapan|mana|dimana|siapa|berapa|kok|"
-                r"gmn|knp|kpn|dmn|brp|boleh|bisa|tolong|dong|ada|kirim|upload|share)\b",
-                text.lower(),
-            ))
+            question_like(text)
+            or (
+                addressed
+                and bool(re.search(
+                    r"\b(boleh|bisa|tolong|dong|ada|kirim|upload|share)\b",
+                    text.lower(),
+                ))
+            )
         )
 
         directed = (
@@ -1142,12 +1312,15 @@ class CommunityBot:
             BACKUP_QUERY.search(text)
         )
 
+        priority = bool(
+            social
+            or question
+            or directed
+            or wants_backup
+        )
+
         if response is None:
-            if (
-                not directed
-                and not wants_backup
-                and self.ai is None
-            ):
+            if not priority and self.ai is None:
                 return
 
             response = (
@@ -1156,108 +1329,161 @@ class CommunityBot:
             )
 
         now = self.clock()
+
         self.last_reminder.setdefault(
-            message.chat.id, now
+            message.chat.id,
+            now,
         )
 
-        delay = (
-            15 if directed
-            else self.settings.cooldown
+        user_key = (
+            message.chat.id,
+            message.from_user.id,
+            hash(" ".join(text.casefold().split())),
         )
 
-        if (
-            now - self.last_reply.get(
-                message.chat.id, -10000
-            ) < delay
-        ):
+        if priority:
+            if (
+                now - self.last_user_reply.get(
+                    user_key, -10000
+                ) < 5
+            ):
+                return
+
+        else:
+            if (
+                now - self.last_reply.get(
+                    message.chat.id, -10000
+                ) < self.settings.cooldown
+            ):
+                return
+
+            if (
+                random.random() >= self.settings.chance
+                or self.queued_replies.get(
+                    message.chat.id, 0
+                )
+            ):
+                return
+
+        if self.queued_replies.get(
+            message.chat.id, 0
+        ) >= 30:
+            logger.warning(
+                "Antrean balasan grup penuh; "
+                "moderasi tetap berjalan."
+            )
             return
 
-        if (
-            not directed
-            and random.random() >= self.settings.chance
-        ):
-            return
+        if len(self.last_user_reply) > 5000:
+            self.last_user_reply.clear()
 
-        if message.chat.id in self.ai_pending:
-            return
-
+        self.last_user_reply[user_key] = now
         self.last_reply[message.chat.id] = now
 
-        try:
-            reminder_due = (
-                now - self.last_reminder[
-                    message.chat.id
-                ] >= 1800
+        reminder_due = (
+            now - self.last_reminder[
+                message.chat.id
+            ] >= 1800
+        )
+
+        if social:
+            kind, response = "text", social
+
+        elif wants_backup or (
+            not priority
+            and reminder_due
+            and random.random() < 0.2
+        ):
+            kind = "backup"
+            response = random.choice(BACKUP_REMINDERS)
+            self.last_reminder[message.chat.id] = now
+
+        elif media_requested(text):
+            kind, response = "text", "Ok ler"
+
+        elif self.ai is not None:
+            kind = "ai"
+            self.ai_pending[message.chat.id] = (
+                self.ai_pending.get(
+                    message.chat.id, 0
+                ) + 1
             )
 
-            if wants_backup or (
-                reminder_due
-                and not media_requested(text)
-                and random.random() < 0.2
-            ):
-                self.last_reminder[
-                    message.chat.id
-                ] = now
+        else:
+            kind = "text"
 
-                await message.reply_text(
-                    random.choice(BACKUP_REMINDERS),
-                    reply_markup=self.private_button(context.bot),
+        self.queued_replies[message.chat.id] = (
+            self.queued_replies.get(
+                message.chat.id, 0
+            ) + 1
+        )
+
+        context.application.create_task(
+            self.deliver_chat_reply(
+                message,
+                context,
+                kind,
+                response,
+                list(self.history[message.chat.id]),
+                priority,
+            ),
+            update=update,
+        )
+
+    async def deliver_chat_reply(
+        self,
+        message,
+        context,
+        kind,
+        response,
+        history,
+        priority,
+    ):
+        try:
+            if not self.chatter_overrides.get(
+                message.chat.id,
+                self.settings.chatter_enabled,
+            ):
+                return
+
+            if kind == "backup":
+                await self.send_group_text(
+                    message,
+                    response,
+                    reply_markup=self.private_button(
+                        context.bot
+                    ),
                 )
 
-                await asyncio.sleep(1)
-
-                await message.reply_text(
+                await self.send_group_text(
+                    message,
                     self.settings.backup_url,
                     disable_web_page_preview=True,
                 )
-
-            elif media_requested(text):
-                await message.reply_text("Ok ler")
-                self.history[message.chat.id].append({
-                    "speaker": "bot",
-                    "text": "Ok ler",
-                })
-
-            elif self.ai is not None:
-                self.ai_pending.add(message.chat.id)
-
-                context.application.create_task(
-                    self.ai_reply(
-                        message,
-                        context,
-                        list(self.history[message.chat.id]),
-                        directed,
-                    ),
-                    update=update,
-                )
-
-            else:
-                await message.reply_text(response)
-
-        except TelegramError as error:
-            logger.warning(
-                "Balasan nimbrung tertunda: jenis=%s",
-                type(error).__name__,
-            )
-
-    async def ai_reply(self, message, context, history, directed):
-        try:
-            response = await self.ai.answer(history)
-
-            if response is None:
-                if directed:
-                    await message.reply_text(
-                        "Gue lagi belum bisa jawab sekarang, ler. "
-                        "Coba lagi bentar ya."
-                    )
                 return
 
-            await message.reply_text(
+            if kind == "ai":
+                response = await self.ai.answer(history)
+
+                if response is None:
+                    if not priority:
+                        return
+
+                    response = (
+                        "Gue belum bisa jawab pasti sekarang, ler. "
+                        "Bisa jelasin detail pertanyaannya?"
+                    )
+
+            sent = await self.send_group_text(
+                message,
                 response,
                 disable_web_page_preview=True,
             )
 
-            if message.chat.id in self.history:
+            if (
+                sent is not None
+                and message.chat.id in self.history
+            ):
                 self.history[message.chat.id].append({
                     "speaker": "bot",
                     "text": response,
@@ -1265,14 +1491,41 @@ class CommunityBot:
 
         except TelegramError as error:
             logger.warning(
-                "Jawaban AI tertunda: jenis=%s",
+                "Balasan grup tertunda: jenis=%s",
                 type(error).__name__,
             )
 
         finally:
-            self.ai_pending.discard(
-                message.chat.id
+            queued = (
+                self.queued_replies.get(
+                    message.chat.id, 1
+                ) - 1
             )
+
+            if queued:
+                self.queued_replies[
+                    message.chat.id
+                ] = queued
+            else:
+                self.queued_replies.pop(
+                    message.chat.id, None
+                )
+
+            if kind == "ai":
+                pending = (
+                    self.ai_pending.get(
+                        message.chat.id, 1
+                    ) - 1
+                )
+
+                if pending:
+                    self.ai_pending[
+                        message.chat.id
+                    ] = pending
+                else:
+                    self.ai_pending.pop(
+                        message.chat.id, None
+                    )
 
     async def control(self, update, context):
         message = update.effective_message
@@ -1378,7 +1631,8 @@ def main():
         ).start()
 
         logger.info(
-            "MCM INDUK v4 aktif. Welcome: %s. Gemini: %s.",
+            "MCM INDUK v5 aktif: sapaan, pertanyaan, BT diprioritaskan. "
+            "Welcome: %s. Gemini: %s.",
             "on" if controller.settings.welcome_enabled else "off",
             "dikonfigurasi" if controller.ai is not None else "belum diatur",
         )
