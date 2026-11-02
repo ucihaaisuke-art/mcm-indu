@@ -11,7 +11,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity
-from telegram.error import TelegramError
+from telegram.error import BadRequest, NetworkError, RetryAfter, TelegramError
 from telegram.ext import (
     Application,
     ApplicationHandlerStop,
@@ -30,6 +30,17 @@ BACKUP_TEXT = (
     "dari sini. Jangan lupa save botnya ya."
 )
 
+BACKUP_REMINDERS = (
+    "Oh iya ler nanti kalo grup ini ilang lu bisa chat gue biar gue kasih lu link baru",
+    "Ler, save bot gue dulu. Kalo grup ini ilang, chat gue buat ambil link cadangannya.",
+    "Biar nggak putus kabar, ler, simpen bot gue ya. Link cadangan kita gue kirim di bawah.",
+)
+
+BACKUP_QUERY = re.compile(
+    r"\b(link\s+(?:baru|cadangan)|grup.*(?:ilang|hilang|banned))\b",
+    re.IGNORECASE,
+)
+
 LINK_PATTERN = re.compile(
     r"(?:https?://|tg://|www\.|(?:t|telegram)\.me/)\S+|"
     r"(?<![\w@.])(?:[a-z0-9-]+\.)+"
@@ -45,10 +56,14 @@ class Settings:
     chatter_enabled: bool = True
     cooldown: int = 120
     chance: float = 0.08
+    owner_id: int | None = None
+    target_group_id: int | None = None
 
     @classmethod
     def from_env(cls):
-        url = os.environ.get("MCM_BACKUP_URL", cls.backup_url).strip()
+        url = os.environ.get(
+            "MCM_BACKUP_URL", cls.backup_url
+        ).strip()
 
         try:
             parsed = urlsplit(url)
@@ -60,12 +75,21 @@ class Settings:
                 and parsed.port in (None, 443)
                 and not any(char.isspace() for char in url)
             )
+
             cooldown = int(
                 os.environ.get("MCM_NIMBRUNG_JEDA", "120")
             )
             chance = float(
                 os.environ.get("MCM_NIMBRUNG_PELUANG", "0.08")
             )
+
+            owner = os.environ.get("MCM_OWNER_ID", "").strip()
+            target = os.environ.get(
+                "MCM_TARGET_GROUP_ID", ""
+            ).strip()
+
+            owner_id = int(owner) if owner else None
+            target_group_id = int(target) if target else None
 
         except ValueError:
             raise SystemExit(
@@ -81,11 +105,28 @@ class Settings:
                 "Periksa URL HTTPS, jeda 30–3600, dan peluang 0–1."
             )
 
+        if owner_id is not None and owner_id <= 0:
+            raise SystemExit(
+                "MCM_OWNER_ID harus berupa ID akun positif."
+            )
+
+        if target_group_id is not None and target_group_id >= 0:
+            raise SystemExit(
+                "MCM_TARGET_GROUP_ID harus berupa ID grup negatif."
+            )
+
         enabled = os.environ.get(
             "MCM_NIMBRUNG", "on"
         ).lower() in ("on", "true", "1")
 
-        return cls(url, enabled, cooldown, chance)
+        return cls(
+            url,
+            enabled,
+            cooldown,
+            chance,
+            owner_id,
+            target_group_id,
+        )
 
 
 def contains_link(message):
@@ -123,7 +164,6 @@ def forwarded_media(message):
         return False
 
     document = message.document
-
     file_media = document and (
         (document.mime_type or "").startswith(
             ("image/", "video/")
@@ -163,8 +203,8 @@ def simple_reply(text):
 
     if re.search(r"\b(horor|horror)\b", lower):
         return (
-            "Tim horor nih? Lebih suka suasana bikin merinding "
-            "atau jumpscare, bro? 👀"
+            "Tim horor nih, ler? Lu lebih takut "
+            "suasananya atau jumpscare-nya? 👀"
         )
 
     if re.search(
@@ -172,10 +212,9 @@ def simple_reply(text):
         lower,
     ):
         return random.choice((
-            "Lagi bahas tontonan apa, bro? Kasih judulnya "
-            "biar yang lain bisa ikut nimbrung 🎬",
-            "Boleh kasih pendapat soal filmnya, "
-            "tapi tahan spoiler dulu ya, bro 😄",
+            "Film apa tuh, ler? Spill judulnya, jangan spoil endingnya 😭",
+            "Yang udah nonton, kasih rating versi lu dong. Biar yang lain ada gambaran 🎬",
+            "Gas bahas filmnya, ler. Tapi endingnya dikunci dulu, kasihan yang belum nonton 😂",
         ))
 
     if re.search(
@@ -183,27 +222,21 @@ def simple_reply(text):
         lower,
     ):
         return random.choice((
-            "Wkwk, ada aja bro 😂",
-            "Obrolan kalian bikin rame suasana 😄",
+            "Wkwk, ada-ada aja lu, ler 😂",
+            "Lanjut ler, obrolan lu pada rame juga 😂",
         ))
 
     if re.search(
         r"\b(pagi|siang|sore|malam|halo|hallo|assalamualaikum)\b",
         lower,
     ):
-        return (
-            "Halo bro! Semoga harinya asik. "
-            "Lagi pada bahas apa nih? 👋"
-        )
+        return "Yo ler, pada nongol nih. Lagi bahas apaan? 👋"
 
     if re.search(
         r"\b(makasih|terimakasih|terima kasih|thanks)\b",
         lower,
     ):
-        return (
-            "Sama-sama bro, saling bantu "
-            "biar grupnya makin enak 😄"
-        )
+        return "Santai ler, saling bantu aja biar grupnya makin asik 😄"
 
     return None
 
@@ -216,6 +249,11 @@ class CommunityBot:
         self.welcomed = {}
         self.last_reply = {}
         self.chatter_overrides = {}
+        self.last_reminder = {}
+        self.queued_media = set()
+        self.albums = {}
+        self.media_lock = asyncio.Lock()
+        self.next_media_time = 0
 
     def private_button(self, bot):
         return InlineKeyboardMarkup([[
@@ -247,7 +285,6 @@ class CommunityBot:
                 message.chat.id,
                 user.id,
             )
-
         except TelegramError as error:
             logger.warning(
                 "Pemeriksaan admin tertunda: jenis=%s",
@@ -267,7 +304,6 @@ class CommunityBot:
             self.clock() + 30,
             result,
         )
-
         return result
 
     async def moderate(self, update, context):
@@ -279,7 +315,6 @@ class CommunityBot:
         ):
             return
 
-        # Posting otomatis dari channel resmi yang terhubung diizinkan.
         if message.is_automatic_forward:
             return
 
@@ -299,7 +334,6 @@ class CommunityBot:
 
         try:
             await message.delete()
-
         except TelegramError as error:
             logger.warning(
                 "Hapus pesan gagal: jenis=%s. "
@@ -307,8 +341,29 @@ class CommunityBot:
                 type(error).__name__,
             )
 
-        # Hanya menghapus pesan. Tidak melakukan ban, kick, atau restrict.
+        # Hanya menghapus pesan, tanpa ban atau mengeluarkan anggota.
         raise ApplicationHandlerStop
+
+    async def service_notice(self, update, context):
+        message = update.effective_message
+
+        if (
+            message is None
+            or message.chat.type not in ("group", "supergroup")
+            or not (
+                message.new_chat_members
+                or message.left_chat_member
+            )
+        ):
+            return
+
+        try:
+            await message.delete()
+        except TelegramError as error:
+            logger.warning(
+                "Hapus pesan layanan tertunda: jenis=%s",
+                type(error).__name__,
+            )
 
     async def start(self, update, context):
         message = update.effective_message
@@ -326,7 +381,6 @@ class CommunityBot:
                 ]]),
                 disable_web_page_preview=True,
             )
-
         else:
             await message.reply_text(
                 "Buka chat pribadi bot lalu tekan Start "
@@ -341,11 +395,240 @@ class CommunityBot:
 
         if text in ("start", "star"):
             await self.start(update, context)
-
         else:
             await update.effective_message.reply_text(
                 "Ketik /start untuk mengambil link cadangan."
             )
+
+    async def show_id(self, update, context):
+        message = update.effective_message
+
+        if message.chat.type == "private":
+            await message.reply_text(
+                f"ID akun kamu: {message.from_user.id}"
+            )
+
+        elif await self.admin_status(message, context) is True:
+            await message.reply_text(
+                f"ID grup: {message.chat.id}\n"
+                "Salin lengkap termasuk tanda minus."
+            )
+
+        else:
+            await message.reply_text(
+                "Minta admin grup yang menjalankan /id ya, ler."
+            )
+
+    async def private_media(self, update, context):
+        message = update.effective_message
+
+        if (
+            message is None
+            or message.chat.type != "private"
+            or update.edited_message is not None
+        ):
+            return
+
+        if message.from_user.id != self.settings.owner_id:
+            await message.reply_text(
+                "Kirim media ke grup hanya tersedia "
+                "untuk pemilik bot, ler."
+            )
+            return
+
+        if self.settings.target_group_id is None:
+            await message.reply_text(
+                "Grup tujuan belum diatur. Isi "
+                "MCM_TARGET_GROUP_ID di Railway dulu, ler."
+            )
+            return
+
+        identity = (
+            message.chat.id,
+            message.message_id,
+        )
+
+        if identity in self.queued_media:
+            return
+
+        if len(self.queued_media) > 5000:
+            self.queued_media.clear()
+
+        self.queued_media.add(identity)
+
+        if message.media_group_id:
+            key = (
+                message.chat.id,
+                message.media_group_id,
+            )
+
+            if key not in self.albums:
+                self.albums[key] = {
+                    "ids": set(),
+                    "message": message,
+                }
+                context.application.create_task(
+                    self.flush_album(key, context),
+                    update=update,
+                )
+
+            self.albums[key]["ids"].add(
+                message.message_id
+            )
+
+        else:
+            context.application.create_task(
+                self.send_media(
+                    message,
+                    [message.message_id],
+                    context,
+                ),
+                update=update,
+            )
+
+    async def flush_album(self, key, context):
+        await asyncio.sleep(1.2)
+        batch = self.albums.pop(key, None)
+
+        if batch:
+            await self.send_media(
+                batch["message"],
+                sorted(batch["ids"]),
+                context,
+            )
+
+    async def send_media(self, message, message_ids, context):
+        target = self.settings.target_group_id
+
+        if (
+            target is None
+            or message.chat.type != "private"
+            or message.from_user.id != self.settings.owner_id
+        ):
+            return
+
+        async with self.media_lock:
+            try:
+                chat = await context.bot.get_chat(target)
+
+                owner = await context.bot.get_chat_member(
+                    target,
+                    self.settings.owner_id,
+                )
+
+                bot_member = await context.bot.get_chat_member(
+                    target,
+                    context.bot.id,
+                )
+
+                if (
+                    chat.type not in ("group", "supergroup")
+                    or owner.status not in (
+                        "creator",
+                        "administrator",
+                    )
+                    or bot_member.status not in (
+                        "creator",
+                        "administrator",
+                    )
+                ):
+                    await message.reply_text(
+                        "Akun lu dan bot harus jadi admin "
+                        "di grup tujuan dulu, ler."
+                    )
+                    return
+
+                delay = (
+                    self.next_media_time - self.clock()
+                )
+
+                if delay > 0:
+                    await asyncio.sleep(delay)
+
+                for attempt in range(2):
+                    try:
+                        copied = await context.bot.copy_messages(
+                            chat_id=target,
+                            from_chat_id=message.chat.id,
+                            message_ids=sorted(
+                                set(message_ids)
+                            ),
+                        )
+                        break
+
+                    except RetryAfter as error:
+                        wait = error.retry_after
+                        wait = (
+                            wait.total_seconds()
+                            if hasattr(wait, "total_seconds")
+                            else float(wait)
+                        )
+
+                        self.next_media_time = max(
+                            self.next_media_time,
+                            self.clock() + wait + 1,
+                        )
+
+                        if attempt or wait > 45:
+                            raise
+
+                        await asyncio.sleep(wait + 1)
+
+                self.next_media_time = (
+                    self.clock()
+                    + 3.5 * max(len(copied), 1)
+                )
+
+                if not copied:
+                    await message.reply_text(
+                        "Media tidak dapat disalin Telegram. "
+                        "Periksa apakah sumbernya dilindungi."
+                    )
+                else:
+                    text = (
+                        f"Beres ler, {len(copied)} media "
+                        "sudah dikirim ke grup."
+                    )
+
+                    if len(copied) < len(message_ids):
+                        text += (
+                            " Sebagian media tidak "
+                            "dapat disalin Telegram."
+                        )
+
+                    await message.reply_text(text)
+
+            except TelegramError as error:
+                logger.warning(
+                    "Kirim media tertunda: jenis=%s",
+                    type(error).__name__,
+                )
+
+                text = (
+                    "Pengiriman belum berhasil. "
+                    "Periksa ID grup dan izin admin, ler."
+                )
+
+                if (
+                    isinstance(error, NetworkError)
+                    and not isinstance(error, BadRequest)
+                ):
+                    text = (
+                        "Koneksi putus saat kirim. Cek grup "
+                        "dulu sebelum mengulang; medianya "
+                        "mungkin sudah terkirim, ler."
+                    )
+
+                elif isinstance(error, RetryAfter):
+                    text = (
+                        "Telegram sedang membatasi kiriman. "
+                        "Tunggu dulu sebelum mengirim ulang, ler."
+                    )
+
+                try:
+                    await message.reply_text(text)
+                except TelegramError:
+                    pass
 
     async def greet(self, chat_id, users, context):
         fresh = []
@@ -363,7 +646,9 @@ class CommunityBot:
 
             if (
                 not user.is_bot
-                and now - self.welcomed.get(key, -1000) >= 20
+                and now - self.welcomed.get(
+                    key, -1000
+                ) >= 20
             ):
                 self.welcomed[key] = now
                 fresh.append(key)
@@ -460,7 +745,9 @@ class CommunityBot:
             return
 
         reply = message.reply_to_message
-        replied_user = reply.from_user if reply else None
+        replied_user = (
+            reply.from_user if reply else None
+        )
 
         mentioned = (
             f"@{context.bot.username.lower()}"
@@ -472,16 +759,24 @@ class CommunityBot:
             and replied_user.id == context.bot.id
         )
 
+        wants_backup = bool(
+            BACKUP_QUERY.search(text)
+        )
+
         if response is None:
-            if not directed:
+            if not directed and not wants_backup:
                 return
 
             response = (
-                "Siap bro, aku bot MCM INDUK. "
-                "Lagi bahas apa nih? 😄"
+                "Gue bot MCM INDUK, ler 😄 "
+                "Lagi pada bahas apaan nih?"
             )
 
         now = self.clock()
+        self.last_reminder.setdefault(
+            message.chat.id, now
+        )
+
         delay = (
             15 if directed
             else self.settings.cooldown
@@ -503,7 +798,36 @@ class CommunityBot:
         self.last_reply[message.chat.id] = now
 
         try:
-            await message.reply_text(response)
+            reminder_due = (
+                now - self.last_reminder[
+                    message.chat.id
+                ] >= 1800
+            )
+
+            if wants_backup or (
+                reminder_due
+                and random.random() < 0.2
+            ):
+                self.last_reminder[
+                    message.chat.id
+                ] = now
+
+                await message.reply_text(
+                    random.choice(BACKUP_REMINDERS),
+                    reply_markup=self.private_button(
+                        context.bot
+                    ),
+                )
+
+                await asyncio.sleep(1)
+
+                await message.reply_text(
+                    self.settings.backup_url,
+                    disable_web_page_preview=True,
+                )
+
+            else:
+                await message.reply_text(response)
 
         except TelegramError as error:
             logger.warning(
@@ -615,8 +939,8 @@ def main():
         ).start()
 
         logger.info(
-            "MCM INDUK aktif. "
-            "Mode nimbrung sederhana, tanpa API AI."
+            "MCM INDUK v2 aktif: hapus join/leave, "
+            "nimbrung gaul, dan media pemilik."
         )
 
     async def post_shutdown(application):
@@ -645,6 +969,15 @@ def main():
 
     app.add_handler(
         MessageHandler(
+            filters.StatusUpdate.NEW_CHAT_MEMBERS
+            | filters.StatusUpdate.LEFT_CHAT_MEMBER,
+            controller.service_notice,
+        ),
+        group=-2,
+    )
+
+    app.add_handler(
+        MessageHandler(
             filters.ChatType.GROUPS,
             controller.moderate,
         ),
@@ -666,6 +999,13 @@ def main():
     )
 
     app.add_handler(
+        CommandHandler(
+            "id",
+            controller.show_id,
+        )
+    )
+
+    app.add_handler(
         MessageHandler(
             filters.StatusUpdate.NEW_CHAT_MEMBERS,
             controller.welcome,
@@ -676,6 +1016,26 @@ def main():
         ChatMemberHandler(
             controller.membership,
             ChatMemberHandler.CHAT_MEMBER,
+        )
+    )
+
+    media_filter = (
+        filters.PHOTO
+        | filters.VIDEO
+        | filters.ANIMATION
+        | filters.AUDIO
+        | filters.VOICE
+        | filters.VIDEO_NOTE
+        | filters.Document.ALL
+        | filters.Sticker.ALL
+    )
+
+    app.add_handler(
+        MessageHandler(
+            filters.ChatType.PRIVATE
+            & filters.UpdateType.MESSAGE
+            & media_filter,
+            controller.private_media,
         )
     )
 
