@@ -6,6 +6,7 @@ import random
 import re
 import threading
 import time
+import unicodedata
 from collections import deque
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -41,6 +42,69 @@ LINK_PATTERN = re.compile(
     r"(?=[/\s?#.,!):;]|$)",
     re.IGNORECASE,
 )
+CHILD_WARNING = (
+    "Jangan cari video begituan di sini ya. Konten seksual yang melibatkan "
+    "anak dilarang. Jaga grup ini tetap aman."
+)
+
+
+def normalized_text(text):
+    text = unicodedata.normalize("NFKC", text or "").casefold()
+    text = re.sub(r"[\u200b-\u200f\u2060\ufeff]", "", text)
+    return " ".join(re.sub(r"[^\w\s]", " ", text).split())
+
+
+def update_requested(text):
+    lower = normalized_text(text)
+    if re.search(r"\b(jangan|gausah|gakusah|dilarang|stop)\b", lower):
+        return False
+    return media_requested(text) or bool(re.search(
+        r"\b(?:mana|minta|kirim|ada|spill|drop|lanjut)\b.*\b(?:lanjutan(?:nya)?|bahan(?:nya)?)\b|"
+        r"\b(?:lanjutan(?:nya)?|bahan(?:nya)?)\b.*\b(?:mana|lagi|dong|ada)\b|"
+        r"\b(?:video(?:nya)?|vid(?:nya)?|konten(?:nya)?)\b.*\b(?:lagi|lanjut)\b|"
+        r"\blanjut(?:in|kan)?\s+(?:lagi\s+)?(?:min|admin|dong|bray)\b",
+        lower,
+    ))
+
+
+def child_content_request(text, quoted_text=""):
+    lower = normalized_text(text)
+
+    # Kata terlarang sesuai aturan pemilik, dicocokkan sebagai kata utuh.
+    slang = r"\b(?:b[o0]c[i1]l|[o0]c[i1]l|c[i1]l)(?:nya)?\b"
+    if re.search(slang, lower):
+        return True
+
+    family = (
+        r"\b(?:ibu\s+(?:dan\s+)?anak|mom\s*(?:and\s*)?kids?|"
+        r"anak\s+kecil|anak\s+di\s+bawah\s+umur|di\s+bawah\s+umur|underage)\b"
+    )
+    seeking = (
+        r"\b(?:ada|punya|cari|nyari|minta|kirim(?:in|kan)?|"
+        r"share|spill|drop|mana)\b"
+    )
+    media = (
+        r"\b(?:video(?:nya)?|vid|foto(?:nya)?|gambar|bahan|konten|film)\b"
+    )
+    sexual = (
+        r"\b(?:seks(?:ual)?|sex|porno|porn|bokep|bugil|"
+        r"telanjang|mesum|cabul|csam)\b"
+    )
+    if re.search(family, lower) and (
+        re.search(sexual, lower)
+        or (re.search(seeking, lower) and re.search(media, lower))
+    ):
+        return True
+
+    # Permintaan lanjutan yang merujuk pesan terlarang juga ditahan.
+    if quoted_text and update_requested(text):
+        return child_content_request(quoted_text)
+    return False
+
+
+def quoted_message_text(message):
+    quoted = message.reply_to_message
+    return (quoted.text or quoted.caption or "") if quoted else ""
 
 
 def media_requested(text):
@@ -74,6 +138,7 @@ def social_reply(text):
         re.I,
     ):
         return "Bt apa sih bang?"
+
     greeting = re.match(
         r"^\s*(?:@\w+\s+)?(?:(?:min|admin|ler|bang|bro)[\s,:!.-]+)?"
         r"(?:selamat\s+)?(?:halo|hallo|helo|hello|hai|hay|hi|hy|hey|hei|yo|oy|woi|"
@@ -86,24 +151,33 @@ def social_reply(text):
             r"\bapa\s+kabar\b", "", text[greeting.end():], flags=re.I
         )
         tail = re.sub(
-            r"\b(min|admin|ler|bang|bro|gan|guys|semua)\b", "", tail, flags=re.I
+            r"\b(min|admin|ler|bang|bro|gan|guys|semua)\b",
+            "",
+            tail,
+            flags=re.I,
         ).strip(" \t\n!?,.")
         if not question_like(tail) and not re.search(
-            r"\b(bisa|boleh|ada|tolong|kirim|upload|share)\b", tail, re.I
+            r"\b(bisa|boleh|ada|tolong|kirim|upload|share)\b",
+            tail,
+            re.I,
         ):
             return random.choice((
                 "Halo juga ler! Lagi ngapain nih? 😎",
                 "Yo ler, nongol juga lu. Ada yang mau ditanyain? 😄",
                 "Halo bang! Lagi cari tontonan atau mau ngobrol nih? 🎬",
             ))
+
     if re.fullmatch(
         r"\s*(min|admin|bot|mcm)(?:\s+(ler|bang|bro|gan))?[\s!?.]*",
         text,
         re.I,
     ):
         return "Yo ler, ada yang mau ditanyain?"
+
     if re.fullmatch(
-        r"\s*p\s*(min|admin|ler|bang|bro)?[\s!?.]*", text, re.I
+        r"\s*p\s*(min|admin|ler|bang|bro)?[\s!?.]*",
+        text,
+        re.I,
     ):
         return "Yo ler, ada apa nih? 😎"
     return None
@@ -147,6 +221,7 @@ class Settings:
             raise SystemExit(
                 "Pengaturan URL/jeda/peluang MCM tidak valid."
             ) from None
+
         if not valid or not 30 <= cooldown <= 3600 or not 0 <= chance <= 1:
             raise SystemExit(
                 "Periksa URL HTTPS, jeda 30–3600, dan peluang 0–1."
@@ -155,6 +230,7 @@ class Settings:
             raise SystemExit("MCM_OWNER_ID harus berupa ID akun positif.")
         if target_group_id is not None and target_group_id >= 0:
             raise SystemExit("MCM_TARGET_GROUP_ID harus berupa ID grup negatif.")
+
         enabled = os.environ.get("MCM_NIMBRUNG", "on").lower() in (
             "on", "true", "1"
         )
@@ -169,6 +245,7 @@ class Settings:
         )
         if not re.fullmatch(r"[A-Za-z0-9_.-]+", model):
             raise SystemExit("MCM_AI_MODEL tidak valid.")
+
         mode = os.environ.get("MCM_CHAT_MODE", "all").strip().lower()
         if mode not in ("all", "selective") or not 1 <= ai_rpm <= 60:
             raise SystemExit(
@@ -221,6 +298,7 @@ class GeminiChat:
                 return False
             self.calls.append(self.clock())
             return True
+
         async with self.budget_lock:
             while enabled():
                 delay = self.budget_delay()
@@ -233,6 +311,15 @@ class GeminiChat:
     async def answer(
         self, history, *, wait_for_budget=False, enabled=lambda: True
     ):
+        history = list(history)[-8:]
+        if history:
+            latest = history[-1]
+            if child_content_request(
+                latest.get("text", ""),
+                latest.get("reply_to", ""),
+            ):
+                return CHILD_WARNING
+
         instructions = (
             "Kamu bot komunitas Telegram MCM INDUK. Balas pesan anggota terakhir "
             "berdasarkan konteks percakapan. Bahasa Indonesia gaul Gen Z yang santai "
@@ -243,6 +330,14 @@ class GeminiChat:
             "mengulang jawaban sapaan yang sama. BT/bt grup biasanya berarti barter "
             "grup; kalau ajakannya belum jelas, tanya detail tanpa mengaku admin "
             "sudah menyetujui barter. Untuk pesan sensitif, tanggapi dengan empati. "
+            "Dilarang membantu mencari atau menyediakan konten seksual anak. "
+            "Jika permintaan terakhir atau konteks yang dirujuk mengarah ke sana, "
+            "tolak dan tegur singkat tanpa hinaan; jangan menyuruh menunggu kontennya. "
+            "Untuk permintaan media biasa yang tidak terlarang, seperti 'mana "
+            "lanjutannya', 'ada bahan lagi ga', atau 'kirim video lagi dong', "
+            "jawab satu kalimat santai dengan gaya 'Ok pantau grup aja bray'. "
+            "Boleh variasi singkat yang setara. Jangan menjanjikan jadwal kiriman, "
+            "jangan mengaku sudah mengirim atau sedang mencari media. "
             "Kalau tidak tahu, bilang belum tahu atau minta detail. Jangan mengaku "
             "manusia, jangan mengarang jadwal atau ketersediaan konten. Kamu hanya "
             "menjawab obrolan, tidak dapat mencari atau mengunggah video sendiri. "
@@ -255,12 +350,14 @@ class GeminiChat:
         try:
             if not await self.reserve_call(wait_for_budget, enabled):
                 return None
+
             async with asyncio.timeout(20):
                 async with self.semaphore:
                     if not enabled():
                         return None
                     if self.clock() < self.backoff_until:
                         return None
+
                     response = await self.client.post(
                         f"models/{self.model}:generateContent",
                         json={
@@ -296,6 +393,7 @@ class GeminiChat:
                             response.status_code,
                         )
                         return None
+
                     data = response.json()
                     candidates = data.get("candidates", [])
                     if not candidates:
@@ -304,6 +402,7 @@ class GeminiChat:
                             "untuk pesan ini."
                         )
                         return None
+
                     parts = candidates[0].get("content", {}).get("parts", [])
                     text = "".join(
                         part["text"]
@@ -324,8 +423,10 @@ class GeminiChat:
                             "yang dapat dikirim."
                         )
                         return None
+
                     self.last_error = ""
                     return text[:420]
+
         except (
             httpx.HTTPError, TimeoutError, ValueError,
             KeyError, TypeError, AttributeError,
@@ -382,13 +483,15 @@ def forwarded_media(message):
 def simple_reply(text):
     lower = text.lower()
     if re.search(
-        r"\b(meninggal|berduka|kecelakaan|bunuh diri|sakit parah)\b", lower
+        r"\b(meninggal|berduka|kecelakaan|bunuh diri|sakit parah)\b",
+        lower,
     ):
         return None
     if media_requested(text):
         return "Ok ler"
     if re.search(
-        r"\b(video|film)\b.*\b(ga|gak|nggak|tidak)\s+bisa\b", lower
+        r"\b(video|film)\b.*\b(ga|gak|nggak|tidak)\s+bisa\b",
+        lower,
     ):
         return (
             "Coba cek koneksi terus buka ulang videonya, ler. "
@@ -415,7 +518,8 @@ def simple_reply(text):
             "atau jumpscare-nya? 👀"
         )
     if re.search(
-        r"\b(film|movie|nonton|episode|serial|series|spoiler)\b", lower
+        r"\b(film|movie|nonton|episode|serial|series|spoiler)\b",
+        lower,
     ):
         return random.choice((
             "Film apa tuh, ler? Spill judulnya, jangan spoil endingnya 😭",
@@ -428,7 +532,8 @@ def simple_reply(text):
             "Lanjut ler, obrolan lu pada rame juga 😂",
         ))
     if re.search(
-        r"\b(pagi|siang|sore|malam|halo|hallo|assalamualaikum)\b", lower
+        r"\b(pagi|siang|sore|malam|halo|hallo|assalamualaikum)\b",
+        lower,
     ):
         return "Yo ler, pada nongol nih. Lagi bahas apaan? 👋"
     if re.search(
@@ -465,6 +570,9 @@ class CommunityBot:
         self.conversation_locks = {}
         self.seen_chat_messages = set()
         self.last_chat_notice = {}
+        self.blocked_messages = set()
+        self.last_child_warning = {}
+        self.child_request_users = {}
         self.ai = (
             GeminiChat(
                 settings.gemini_key,
@@ -504,11 +612,26 @@ class CommunityBot:
                 type(error).__name__,
             )
             return None
+
         result = member.status in ("creator", "administrator")
         if len(self.admin_cache) > 5000:
             self.admin_cache.clear()
         self.admin_cache[key] = (self.clock() + 30, result)
         return result
+
+    def forbidden_request(self, message):
+        text = message.text or message.caption or ""
+        if child_content_request(text, quoted_message_text(message)):
+            return True
+        user = message.from_user
+        key = (message.chat.id, user.id) if user is not None else None
+        return bool(
+            key is not None
+            and update_requested(text)
+            and self.clock() - self.child_request_users.get(
+                key, -10000
+            ) < 300
+        )
 
     async def moderate(self, update, context):
         message = update.effective_message
@@ -517,6 +640,37 @@ class CommunityBot:
             or message.chat.type not in ("group", "supergroup")
         ):
             return
+
+        if self.forbidden_request(message):
+            if len(self.blocked_messages) >= 10000:
+                self.blocked_messages.clear()
+            self.blocked_messages.add(
+                (message.chat.id, message.message_id)
+            )
+            if message.from_user is not None:
+                if len(self.child_request_users) >= 5000:
+                    self.child_request_users.clear()
+                self.child_request_users[
+                    (message.chat.id, message.from_user.id)
+                ] = self.clock()
+            try:
+                await message.delete()
+            except TelegramError as error:
+                logger.warning(
+                    "Hapus permintaan terlarang gagal: jenis=%s. "
+                    "Periksa izin hapus pesan.",
+                    type(error).__name__,
+                )
+            if self.clock() - self.last_child_warning.get(
+                message.chat.id, -10000
+            ) >= 10:
+                self.last_child_warning[message.chat.id] = self.clock()
+                context.application.create_task(
+                    self.warn_child_request(message, context),
+                    update=update,
+                )
+            raise ApplicationHandlerStop
+
         if message.is_automatic_forward:
             return
         if not contains_link(message) and not forwarded_media(message):
@@ -532,6 +686,22 @@ class CommunityBot:
                 type(error).__name__,
             )
         raise ApplicationHandlerStop
+
+    async def warn_child_request(self, message, context):
+        try:
+            # Pesan baru, karena pesan asal sudah dihapus.
+            await self.send_group_text(
+                message,
+                CHILD_WARNING,
+                moderation=True,
+                bot=context.bot,
+                disable_web_page_preview=True,
+            )
+        except TelegramError as error:
+            logger.warning(
+                "Teguran grup gagal: jenis=%s",
+                type(error).__name__,
+            )
 
     async def service_notice(self, update, context):
         message = update.effective_message
@@ -606,6 +776,7 @@ class CommunityBot:
             return
         if await self.admin_status(message, context) is not True:
             return
+
         target = message.reply_to_message
         normalized = (
             " ".join(
@@ -654,6 +825,7 @@ class CommunityBot:
                 "di Variables Railway lalu deploy."
             )
             return
+
         response = await self.ai.answer([{
             "speaker": "member",
             "text": "Sapa gue singkat untuk memastikan bot tersambung.",
@@ -692,6 +864,7 @@ class CommunityBot:
                 "Isi MCM_TARGET_GROUP_ID di Railway dulu, ler."
             )
             return
+
         identity = (message.chat.id, message.message_id)
         if identity in self.queued_media:
             return
@@ -706,7 +879,8 @@ class CommunityBot:
                     "message": message,
                 }
                 context.application.create_task(
-                    self.flush_album(key, context), update=update
+                    self.flush_album(key, context),
+                    update=update,
                 )
             self.albums[key]["ids"].add(message.message_id)
         else:
@@ -722,7 +896,9 @@ class CommunityBot:
         batch = self.albums.pop(key, None)
         if batch:
             await self.send_media(
-                batch["message"], sorted(batch["ids"]), context
+                batch["message"],
+                sorted(batch["ids"]),
+                context,
             )
 
     async def send_media(self, message, message_ids, context):
@@ -752,6 +928,7 @@ class CommunityBot:
                         "di grup tujuan dulu, ler."
                     )
                     return
+
                 copied = await self.copy_media_to_group(
                     message, message_ids, context, target
                 )
@@ -813,22 +990,35 @@ class CommunityBot:
         )
         if chat_id == self.settings.target_group_id:
             self.next_media_time = max(
-                self.next_media_time, self.next_outgoing[chat_id]
+                self.next_media_time,
+                self.next_outgoing[chat_id],
             )
 
-    async def send_group_text(self, message, text, **kwargs):
+    async def send_group_text(
+        self, message, text, *,
+        moderation=False, bot=None, **kwargs
+    ):
         chat_id = message.chat.id
         async with self.outgoing_locks.setdefault(
             chat_id, asyncio.Lock()
         ):
             await self.wait_outgoing(chat_id)
-            if not self.chatter_overrides.get(
-                chat_id, self.settings.chatter_enabled
+            if not moderation and (
+                not self.chatter_overrides.get(
+                    chat_id, self.settings.chatter_enabled
+                )
+                or (chat_id, message.message_id) in self.blocked_messages
             ):
                 return None
             try:
                 for attempt in range(2):
                     try:
+                        if moderation:
+                            return await bot.send_message(
+                                chat_id=chat_id,
+                                text=text,
+                                **kwargs,
+                            )
                         return await message.reply_text(text, **kwargs)
                     except RetryAfter as error:
                         wait = error.retry_after
@@ -947,6 +1137,7 @@ class CommunityBot:
             message.chat.id, self.settings.chatter_enabled
         ):
             return
+
         text = message.text or message.caption or ""
         if (
             not text
@@ -955,15 +1146,16 @@ class CommunityBot:
             or forwarded_media(message)
         ):
             return
+        if self.forbidden_request(message):
+            return
 
-        # Mode all selalu menggunakan AI tanpa kata pemicu.
         if self.settings.chat_mode == "all":
             await self.queue_every_message(
                 message, update, context, text
             )
             return
 
-        # Bagian ini hanya untuk mode selective versi sebelumnya.
+        # Mode selective tersedia untuk perilaku versi sebelumnya.
         response = simple_reply(text)
         sensitive = re.search(
             r"\b(meninggal|berduka|kecelakaan|bunuh diri|sakit parah)\b",
@@ -980,6 +1172,7 @@ class CommunityBot:
             "speaker": "member",
             "text": text[:500],
         })
+
         reply = message.reply_to_message
         replied_user = reply.from_user if reply else None
         mentioned = (
@@ -1005,6 +1198,7 @@ class CommunityBot:
         wants_backup = bool(BACKUP_QUERY.search(text))
         priority = bool(
             social or question or directed or wants_backup
+            or update_requested(text)
         )
         if response is None:
             if not priority and self.ai is None:
@@ -1013,6 +1207,7 @@ class CommunityBot:
                 "Maksud lu bagian yang mana, ler? "
                 "Kasih sedikit konteks ya."
             )
+
         now = self.clock()
         self.last_reminder.setdefault(message.chat.id, now)
         user_key = (
@@ -1021,9 +1216,7 @@ class CommunityBot:
             hash(" ".join(text.casefold().split())),
         )
         if priority:
-            if now - self.last_user_reply.get(
-                user_key, -10000
-            ) < 5:
+            if now - self.last_user_reply.get(user_key, -10000) < 5:
                 return
         else:
             if now - self.last_reply.get(
@@ -1035,6 +1228,7 @@ class CommunityBot:
                 or self.queued_replies.get(message.chat.id, 0)
             ):
                 return
+
         if self.queued_replies.get(message.chat.id, 0) >= 30:
             logger.warning(
                 "Antrean balasan grup penuh; moderasi tetap berjalan."
@@ -1047,6 +1241,7 @@ class CommunityBot:
         reminder_due = (
             now - self.last_reminder[message.chat.id] >= 1800
         )
+
         if social:
             kind, response = "text", social
         elif wants_backup or (
@@ -1058,8 +1253,16 @@ class CommunityBot:
                 "backup", random.choice(BACKUP_REMINDERS)
             )
             self.last_reminder[message.chat.id] = now
-        elif media_requested(text):
-            kind, response = "text", "Ok ler"
+        elif update_requested(text):
+            kind, response = (
+                ("ai", None)
+                if self.ai is not None else
+                ("text", "Ok pantau grup aja bray")
+            )
+            if kind == "ai":
+                self.ai_pending[message.chat.id] = (
+                    self.ai_pending.get(message.chat.id, 0) + 1
+                )
         elif self.ai is not None:
             kind = "ai"
             self.ai_pending[message.chat.id] = (
@@ -1067,6 +1270,7 @@ class CommunityBot:
             )
         else:
             kind = "text"
+
         self.queued_replies[message.chat.id] = (
             self.queued_replies.get(message.chat.id, 0) + 1
         )
@@ -1092,6 +1296,7 @@ class CommunityBot:
         if len(self.seen_chat_messages) >= 10000:
             self.seen_chat_messages.clear()
         self.seen_chat_messages.add(identity)
+
         if (
             self.ai is None
             or self.queued_replies.get(chat_id, 0) >= 100
@@ -1120,6 +1325,7 @@ class CommunityBot:
                     update=update,
                 )
             return
+
         if chat_id not in self.history:
             if len(self.history) >= 1000:
                 self.history.pop(next(iter(self.history)))
@@ -1129,11 +1335,7 @@ class CommunityBot:
             "text": text[:500],
         })
         history = list(self.history[chat_id])
-        quoted = message.reply_to_message
-        quote_text = (
-            (quoted.text or quoted.caption or "")
-            if quoted else ""
-        )
+        quote_text = quoted_message_text(message)
         if quote_text:
             history[-1] = dict(
                 history[-1], reply_to=quote_text[:300]
@@ -1151,7 +1353,9 @@ class CommunityBot:
     async def chat_notice(self, message, text):
         try:
             await self.send_group_text(
-                message, text, disable_web_page_preview=True
+                message,
+                text,
+                disable_web_page_preview=True,
             )
         except TelegramError as error:
             logger.warning(
@@ -1172,6 +1376,9 @@ class CommunityBot:
                 and getattr(
                     context.application, "running", True
                 )
+                and (
+                    chat_id, message.message_id
+                ) not in self.blocked_messages
             )
 
         try:
@@ -1194,15 +1401,13 @@ class CommunityBot:
                         "Coba kirim lagi nanti ya.",
                     )
                     return
+
                 sent = await self.send_group_text(
                     message,
                     response,
                     disable_web_page_preview=True,
                 )
-                if (
-                    sent is not None
-                    and chat_id in self.history
-                ):
+                if sent is not None and chat_id in self.history:
                     self.history[chat_id].append({
                         "speaker": "bot",
                         "text": response,
@@ -1251,6 +1456,7 @@ class CommunityBot:
                         "Gue belum bisa jawab pasti sekarang, ler. "
                         "Bisa jelasin detail pertanyaannya?"
                     )
+
             sent = await self.send_group_text(
                 message,
                 response,
@@ -1352,6 +1558,7 @@ def main():
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
     logging.getLogger("telegram").setLevel(logging.CRITICAL)
+
     token = os.environ.get("MCM_BOT_TOKEN", "").strip()
     if not token:
         raise SystemExit(
@@ -1374,7 +1581,7 @@ def main():
             daemon=True,
         ).start()
         logger.info(
-            "MCM INDUK v6 aktif. Mode: %s. Welcome: %s. Gemini: %s.",
+            "MCM INDUK v7 aktif. Mode: %s. Welcome: %s. Gemini: %s.",
             controller.settings.chat_mode,
             "on" if controller.settings.welcome_enabled else "off",
             "dikonfigurasi" if controller.ai is not None else "belum diatur",
@@ -1443,6 +1650,7 @@ def main():
             ChatMemberHandler.CHAT_MEMBER,
         )
     )
+
     media_filter = (
         filters.PHOTO
         | filters.VIDEO
@@ -1477,6 +1685,7 @@ def main():
         ),
         group=1,
     )
+
     app.add_error_handler(error_handler)
     try:
         app.run_polling(
