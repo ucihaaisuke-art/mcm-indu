@@ -2944,5 +2944,9 @@ def main():
         raise SystemExit(1) from None
 
 
+from balas_cepat import pasang_balas_cepat
+
+pasang_balas_cepat(CommunityBot)
+
 if __name__ == "__main__":
     main()
