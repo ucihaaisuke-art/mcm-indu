@@ -206,8 +206,33 @@ def question_like(text):
     )
 
 
+def declines_bot_reply(text):
+    lower = normalized_text(text)
+
+    if re.search(
+        r"\b(?:bukan|ga|gak|nggak|tidak)\s+(?:lagi\s+)?"
+        r"(?:nanya|tanya|bertanya|ngomong|ngobrol)\s+"
+        r"(?:ke|sama|kepada|buat|untuk)\s+"
+        r"(?:lu|lo|elu|elo|kamu|bot|mak|emak|min|admin)\b",
+        lower,
+    ):
+        return True
+
+    return bool(re.fullmatch(
+        r"(?:(?:mak|emak|min|admin|bot)\s+)?"
+        r"(?:jangan|gausah|gakusah|nggak usah|tidak usah)\s+"
+        r"(?:ikut\s+)?(?:nimbrung|nyaut|balas|jawab)"
+        r"(?:\s+(?:lagi|dulu|ya|mak|emak|min|admin|bot|dong))*",
+        lower,
+    ))
+
+
 def addressed_question(message, bot):
     text = message.text or message.caption or ""
+
+    if declines_bot_reply(text):
+        return False
+
     reply = message.reply_to_message
     replied_user = reply.from_user if reply else None
 
@@ -337,6 +362,9 @@ class Settings:
     ai_model: str = "gemini-flash-latest"
     chat_mode: str = "addressed"
     ai_rpm: int = 4
+    ai_provider: str = "openai"
+    openai_key: str = field(default="", repr=False, compare=False)
+    openai_model: str = "gpt-5.5"
 
     @classmethod
     def from_env(cls):
@@ -410,13 +438,38 @@ class Settings:
                 "MCM_AI_RPM harus 1–60."
             )
 
+        provider = os.environ.get(
+            "MCM_AI_PROVIDER",
+            "openai",
+        ).strip().lower()
+
+        openai_key = os.environ.get("OPENAI_API_KEY", "").strip()
+        openai_model = os.environ.get(
+            "MCM_OPENAI_MODEL",
+            "gpt-5.5",
+        ).strip()
+
+        if provider not in ("openai", "gemini"):
+            raise SystemExit(
+                "MCM_AI_PROVIDER harus openai atau gemini."
+            )
+
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+", openai_model):
+            raise SystemExit("MCM_OPENAI_MODEL tidak valid.")
+
         return cls(
             url, enabled, cooldown, chance, owner_id, target_group_id,
             welcome, key, model, mode, ai_rpm,
+            provider, openai_key, openai_model,
         )
 
 
 class GeminiChat:
+    name = "Gemini"
+    base_url = "https://generativelanguage.googleapis.com/v1beta/"
+    http_timeout = 15
+    request_timeout = 20
+
     def __init__(
         self, key, model, *, rpm=4, transport=None, clock=time.monotonic
     ):
@@ -430,10 +483,53 @@ class GeminiChat:
         self.semaphore = asyncio.Semaphore(2)
 
         self.client = httpx.AsyncClient(
-            base_url="https://generativelanguage.googleapis.com/v1beta/",
-            headers={"x-goog-api-key": key},
-            timeout=15,
+            base_url=self.base_url,
+            headers=self.auth_headers(key),
+            timeout=self.http_timeout,
             transport=transport,
+        )
+
+    def auth_headers(self, key):
+        return {"x-goog-api-key": key}
+
+    def endpoint(self):
+        return f"models/{self.model}:generateContent"
+
+    def payload(self, history, instructions):
+        return {
+            "systemInstruction": {
+                "parts": [{"text": instructions}]
+            },
+            "contents": [{
+                "role": "user",
+                "parts": [{
+                    "text": (
+                        "Percakapan terakhir, urut dari lama ke baru:\n"
+                        + json.dumps(
+                            list(history)[-8:],
+                            ensure_ascii=False,
+                        )
+                    )
+                }],
+            }],
+            "generationConfig": {
+                "temperature": 0.8,
+                "maxOutputTokens": 1024,
+            },
+        }
+
+    def response_text(self, data):
+        candidates = data.get("candidates", [])
+        if not candidates:
+            return ""
+
+        parts = candidates[0].get("content", {}).get("parts", [])
+
+        return "".join(
+            part["text"]
+            for part in parts
+            if isinstance(part.get("text"), str)
+            and not part.get("thought")
         )
 
     async def close(self):
@@ -456,8 +552,8 @@ class GeminiChat:
         if not wait:
             if self.budget_delay() > 0 or self.budget_lock.locked():
                 self.last_error = (
-                    "Gemini sedang dijeda atau batas lokal tercapai; "
-                    "tunggu sebentar."
+                    f"{self.name} sedang dijeda atau "
+                    "batas lokal tercapai; tunggu sebentar."
                 )
                 return False
 
@@ -550,7 +646,7 @@ class GeminiChat:
             if not await self.reserve_call(wait_for_budget, enabled):
                 return None
 
-            async with asyncio.timeout(20):
+            async with asyncio.timeout(self.request_timeout):
                 async with self.semaphore:
                     if not enabled():
                         return None
@@ -559,59 +655,63 @@ class GeminiChat:
                         return None
 
                     response = await self.client.post(
-                        f"models/{self.model}:generateContent",
-                        json={
-                            "systemInstruction": {
-                                "parts": [{"text": instructions}]
-                            },
-                            "contents": [{
-                                "role": "user",
-                                "parts": [{
-                                    "text": (
-                                        "Percakapan terakhir, urut dari lama ke baru:\n"
-                                        + json.dumps(
-                                            list(history)[-8:],
-                                            ensure_ascii=False,
-                                        )
-                                    )
-                                }],
-                            }],
-                            "generationConfig": {
-                                "temperature": 0.8,
-                                "maxOutputTokens": 1024,
-                            },
-                        },
+                        self.endpoint(),
+                        json=self.payload(history, instructions),
                     )
 
                     if response.status_code != 200:
-                        self.backoff_until = self.clock() + 60
-                        self.last_error = (
-                            f"Gemini HTTP {response.status_code}. "
-                            "Periksa API key, akses model, atau kuota proyek."
+                        delay = 60
+
+                        try:
+                            delay = max(
+                                delay,
+                                min(
+                                    float(response.headers.get(
+                                        "retry-after", "0"
+                                    )),
+                                    3600,
+                                ),
+                            )
+                        except ValueError:
+                            pass
+
+                        self.backoff_until = self.clock() + delay
+
+                        hints = {
+                            401: (
+                                "API key tidak diterima. "
+                                "Periksa key untuk penyedia yang dipilih."
+                            ),
+                            403: "Akses proyek/model belum diizinkan.",
+                            404: (
+                                "Model belum tersedia untuk proyek ini. "
+                                "Periksa nama dan akses model."
+                            ),
+                            429: (
+                                "Batas permintaan atau kuota/saldo API "
+                                "tercapai. Periksa dashboard API."
+                            ),
+                        }
+
+                        hint = hints.get(
+                            response.status_code,
+                            "Layanan AI belum tersedia; coba lagi nanti.",
                         )
+
+                        self.last_error = (
+                            f"{self.name} HTTP {response.status_code}. "
+                            f"{hint}"
+                        )
+
                         logger.warning(
-                            "Gemini belum tersedia: HTTP %s",
+                            "%s belum tersedia: HTTP %s",
+                            self.name,
                             response.status_code,
                         )
                         return None
 
                     data = response.json()
-                    candidates = data.get("candidates", [])
-
-                    if not candidates:
-                        self.last_error = (
-                            "Gemini tidak menghasilkan jawaban teks "
-                            "untuk pesan ini."
-                        )
-                        return None
-
-                    parts = candidates[0].get("content", {}).get("parts", [])
-                    text = "".join(
-                        part["text"]
-                        for part in parts
-                        if isinstance(part.get("text"), str)
-                        and not part.get("thought")
-                    ).strip()
+                    text = self.response_text(data).strip()
 
                     text = re.sub(
                         r"[\x00-\x08\x0b\x0c\x0e-\x1f]",
@@ -625,8 +725,8 @@ class GeminiChat:
                         or re.search(r"@(?:everyone|all|here)\b", text, re.I)
                     ):
                         self.last_error = (
-                            "Gemini tidak menghasilkan jawaban teks "
-                            "yang dapat dikirim."
+                            f"{self.name} tidak menghasilkan "
+                            "jawaban teks yang dapat dikirim."
                         )
                         return None
 
@@ -642,15 +742,82 @@ class GeminiChat:
             AttributeError,
         ) as error:
             self.backoff_until = self.clock() + 60
+
             self.last_error = (
-                "Gangguan koneksi atau respons Gemini "
-                f"({type(error).__name__})."
+                "Gangguan koneksi atau respons "
+                f"{self.name} ({type(error).__name__})."
             )
+
             logger.warning(
-                "Gemini tertunda: jenis=%s",
+                "%s tertunda: jenis=%s",
+                self.name,
                 type(error).__name__,
             )
             return None
+
+
+class OpenAIChat(GeminiChat):
+    name = "OpenAI"
+    base_url = "https://api.openai.com/v1/"
+    http_timeout = 30
+    request_timeout = 35
+
+    def auth_headers(self, key):
+        return {"Authorization": f"Bearer {key}"}
+
+    def endpoint(self):
+        return "responses"
+
+    def payload(self, history, instructions):
+        payload = {
+            "model": self.model,
+            "instructions": instructions,
+            "input": (
+                "Percakapan terakhir, urut dari lama ke baru:\n"
+                + json.dumps(
+                    list(history)[-8:],
+                    ensure_ascii=False,
+                )
+            ),
+            "max_output_tokens": 600,
+            "store": False,
+        }
+
+        if (
+            self.model == "gpt-5.5"
+            or self.model.startswith("gpt-5.5-")
+        ):
+            payload["reasoning"] = {"effort": "none"}
+
+        return payload
+
+    def response_text(self, data):
+        if data.get("status") != "completed":
+            raise ValueError("OpenAI response not completed")
+
+        text = []
+
+        for item in data.get("output", []):
+            if (
+                item.get("type") != "message"
+                or item.get("role") != "assistant"
+            ):
+                continue
+
+            for part in item.get("content", []):
+                if (
+                    part.get("type") == "output_text"
+                    and isinstance(part.get("text"), str)
+                ):
+                    text.append(part["text"])
+
+                elif (
+                    part.get("type") == "refusal"
+                    and isinstance(part.get("refusal"), str)
+                ):
+                    text.append(part["refusal"])
+
+        return "".join(text)
 
 
 def promotional_buttons(message):
@@ -846,13 +1013,31 @@ class CommunityBot:
         self.unanswered_tasks = {}
         self.activity_sequence = {}
 
-        self.ai = (
-            GeminiChat(
-                settings.gemini_key,
-                settings.ai_model,
-                rpm=settings.ai_rpm,
+        if settings.ai_provider == "openai":
+            self.ai = (
+                OpenAIChat(
+                    settings.openai_key,
+                    settings.openai_model,
+                    rpm=settings.ai_rpm,
+                )
+                if settings.openai_key else None
             )
-            if settings.gemini_key else None
+        else:
+            self.ai = (
+                GeminiChat(
+                    settings.gemini_key,
+                    settings.ai_model,
+                    rpm=settings.ai_rpm,
+                )
+                if settings.gemini_key else None
+            )
+
+    @property
+    def ai_name(self):
+        return (
+            "OpenAI"
+            if self.settings.ai_provider == "openai"
+            else "Gemini"
         )
 
     def private_button(self, bot):
@@ -1503,9 +1688,14 @@ class CommunityBot:
             return
 
         if self.ai is None:
+            key_name = (
+                "OPENAI_API_KEY"
+                if self.settings.ai_provider == "openai"
+                else "GEMINI_API_KEY"
+            )
             await message.reply_text(
-                "Gemini belum diatur. Isi GEMINI_API_KEY "
-                "di Variables Railway lalu deploy."
+                f"{self.ai_name} belum diatur. "
+                f"Isi {key_name} di Variables Railway lalu deploy."
             )
             return
 
@@ -1516,11 +1706,11 @@ class CommunityBot:
 
         if response:
             await message.reply_text(
-                "Gemini berhasil membalas:\n" + response
+                f"{self.ai_name} berhasil membalas:\n" + response
             )
         else:
             await message.reply_text(
-                "Gemini belum berhasil membalas.\n"
+                f"{self.ai_name} belum berhasil membalas.\n"
                 + getattr(
                     self.ai,
                     "last_error",
@@ -1694,6 +1884,7 @@ class CommunityBot:
             next_time = max(next_time, self.next_media_time)
 
         delay = next_time - self.clock()
+
         if delay > 0:
             await asyncio.sleep(delay)
 
@@ -1895,6 +2086,10 @@ class CommunityBot:
         ):
             return
 
+        if declines_bot_reply(text):
+            self.cancel_unanswered(message.chat.id)
+            return
+
         if self.forbidden_request(message):
             return
 
@@ -1919,7 +2114,6 @@ class CommunityBot:
             )
             return
 
-        # Mode selective mempertahankan perilaku versi lama.
         response = simple_reply(text)
         sensitive = re.search(
             r"\b(meninggal|berduka|kecelakaan|bunuh diri|sakit parah)\b",
@@ -2288,13 +2482,21 @@ class CommunityBot:
                 chat_id, -10000
             ) >= 60:
                 self.last_chat_notice[chat_id] = self.clock()
+
+                key_name = (
+                    "OPENAI_API_KEY"
+                    if self.settings.ai_provider == "openai"
+                    else "GEMINI_API_KEY"
+                )
+
                 notice = (
-                    "Gemini belum diatur, le. "
-                    "Admin perlu isi GEMINI_API_KEY di Railway."
+                    f"{self.ai_name} belum diatur, le. "
+                    f"Admin perlu isi {key_name} di Railway."
                     if self.ai is None else
                     "Antrean AI penuh, le. Beberapa pesan belum masuk; "
                     "coba kirim lagi nanti ya."
                 )
+
                 context.application.create_task(
                     self.chat_notice(message, notice),
                     update=update,
@@ -2388,8 +2590,8 @@ class CommunityBot:
                 if response is None:
                     await self.chat_notice(
                         message,
-                        "Gemini lagi belum bisa membalas pesan ini, le. "
-                        "Coba kirim lagi nanti ya.",
+                        "Emak lagi terkendala sambungan AI, le. "
+                        "Coba lagi sebentar ya.",
                     )
                     return
 
@@ -2603,9 +2805,10 @@ def main():
         ).start()
 
         logger.info(
-            "MCM INDUK v11 aktif. Mode: %s. Welcome: %s. Gemini: %s.",
+            "MCM INDUK v12 aktif. Mode: %s. Welcome: %s. AI: %s (%s).",
             controller.settings.chat_mode,
             "on" if controller.settings.welcome_enabled else "off",
+            controller.ai_name,
             "dikonfigurasi" if controller.ai is not None else "belum diatur",
         )
 
