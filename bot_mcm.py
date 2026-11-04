@@ -7,6 +7,7 @@ import re
 import threading
 import time
 import unicodedata
+
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -14,13 +15,19 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
 
 import httpx
+
 from telegram import (
     ChatPermissions,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     MessageEntity,
 )
-from telegram.error import BadRequest, NetworkError, RetryAfter, TelegramError
+from telegram.error import (
+    BadRequest,
+    NetworkError,
+    RetryAfter,
+    TelegramError,
+)
 from telegram.ext import (
     Application,
     ApplicationHandlerStop,
@@ -64,7 +71,6 @@ CHILD_WARNING = (
 )
 
 SPAM_MUTE_MINUTES = 30
-
 GUIDANCE_COOLDOWN = 1800
 GUIDANCE_DELAY = 60
 
@@ -75,7 +81,7 @@ CALL_GUIDANCE = (
 
 RELAY_COMMAND = re.compile(
     r"^\s*tolong[ \t]+kirim[ \t]+ke[ \t]+grup\b[ \t]*(?::[ \t]*)?",
-    re.IGNORECASE,
+    re.I,
 )
 
 
@@ -85,6 +91,7 @@ def relay_body(text):
         return None
 
     start = match.end()
+
     while start < len(text) and text[start] in "\r\n":
         start += 1
 
@@ -127,16 +134,21 @@ def update_requested(text):
         return False
 
     return media_requested(text) or bool(re.search(
-        r"\b(?:mana|minta|kirim|ada|spill|drop|lanjut)\b.*\b(?:lanjutan(?:nya)?|bahan(?:nya)?)\b|"
-        r"\b(?:lanjutan(?:nya)?|bahan(?:nya)?)\b.*\b(?:mana|lagi|dong|ada)\b|"
-        r"\b(?:video(?:nya)?|vid(?:nya)?|konten(?:nya)?)\b.*\b(?:lagi|lanjut)\b|"
-        r"\blanjut(?:in|kan)?\s+(?:lagi\s+)?(?:min|admin|dong|bray|le|emak|mak)\b",
+        r"\b(?:mana|minta|kirim|ada|spill|drop|lanjut)\b.*"
+        r"\b(?:lanjutan(?:nya)?|bahan(?:nya)?)\b|"
+        r"\b(?:lanjutan(?:nya)?|bahan(?:nya)?)\b.*"
+        r"\b(?:mana|lagi|dong|ada)\b|"
+        r"\b(?:video(?:nya)?|vid(?:nya)?|konten(?:nya)?)\b.*"
+        r"\b(?:lagi|lanjut)\b|"
+        r"\blanjut(?:in|kan)?\s+(?:lagi\s+)?"
+        r"(?:min|admin|dong|bray|le|emak|mak)\b",
         lower,
     ))
 
 
 def child_content_request(text, quoted_text=""):
     lower = normalized_text(text)
+
     slang = r"\b(?:b[o0]c[i1]l|[o0]c[i1]l|c[i1]l)(?:nya)?\b"
 
     if re.search(slang, lower):
@@ -144,15 +156,20 @@ def child_content_request(text, quoted_text=""):
 
     family = (
         r"\b(?:ibu\s+(?:dan\s+)?anak|mom\s*(?:and\s*)?kids?|"
-        r"anak\s+kecil|anak\s+di\s+bawah\s+umur|di\s+bawah\s+umur|underage)\b"
+        r"anak\s+kecil|anak\s+di\s+bawah\s+umur|"
+        r"di\s+bawah\s+umur|underage)\b"
     )
+
     seeking = (
         r"\b(?:ada|punya|cari|nyari|minta|kirim(?:in|kan)?|"
         r"share|spill|drop|mana)\b"
     )
+
     media = (
-        r"\b(?:video(?:nya)?|vid|foto(?:nya)?|gambar|bahan|konten|film)\b"
+        r"\b(?:video(?:nya)?|vid|foto(?:nya)?|gambar|"
+        r"bahan|konten|film)\b"
     )
+
     sexual = (
         r"\b(?:seks(?:ual)?|sex|porno|porn|bokep|bugil|"
         r"telanjang|mesum|cabul|csam)\b"
@@ -182,11 +199,14 @@ def media_requested(text):
         return False
 
     media = re.search(
-        r"\b(video(?:nya)?|vid(?:nya)?|foto(?:nya)?|gambar(?:nya)?|konten(?:nya)?)\b",
+        r"\b(video(?:nya)?|vid(?:nya)?|foto(?:nya)?|"
+        r"gambar(?:nya)?|konten(?:nya)?)\b",
         lower,
     )
+
     action = re.search(
-        r"\b(kirim(?:in|kan)?|upload|unggah|share|spill|drop|posting|post|minta|update)\b",
+        r"\b(kirim(?:in|kan)?|upload|unggah|share|spill|"
+        r"drop|posting|post|minta|update)\b",
         lower,
     )
 
@@ -198,8 +218,10 @@ def question_like(text):
         any(mark in text for mark in ("?", "？", "؟"))
         or media_requested(text)
         or bool(re.search(
-            r"\b(apa|siapa|kenapa|gimana|bagaimana|kapan|mana|dimana|berapa|kok|"
-            r"gmn|knp|kpn|dmn|brp)\b|\b(bisa|boleh)\s+(tolong|minta|bantu|kirim|share|upload)\b|"
+            r"\b(apa|siapa|kenapa|gimana|bagaimana|kapan|mana|"
+            r"dimana|berapa|kok|gmn|knp|kpn|dmn|brp)\b|"
+            r"\b(bisa|boleh)\s+"
+            r"(tolong|minta|bantu|kirim|share|upload)\b|"
             r"\bada\b.*\b(ga|gak|nggak|belum)\b",
             text.lower(),
         ))
@@ -245,7 +267,8 @@ def addressed_question(message, bot):
             text,
             re.I,
         ))
-        if bot.username else False
+        if bot.username
+        else False
     )
 
     addressed = bool(re.search(
@@ -272,7 +295,8 @@ def addressed_question(message, bot):
     ).strip(" \t\n,:!.")
 
     english_question = bool(re.match(
-        r"(?:what|who|where|when|why|how|can|could|would|do|does|is|are|any|please)\b",
+        r"(?:what|who|where|when|why|how|can|could|would|"
+        r"do|does|is|are|any|please)\b",
         without_call,
         re.I,
     ))
@@ -282,9 +306,10 @@ def addressed_question(message, bot):
         or question_like(text)
         or update_requested(text)
         or bool(re.search(
-            r"\b(?:bisa|boleh|tolong|minta|kirim(?:in|kan)?|kasih|spill|share|drop|"
-            r"carikan|cariin|jelas(?:kan|in)|bantu(?:in)?|pakai|pake|gunakan|"
-            r"ganti|bahasa|dong)\b",
+            r"\b(?:bisa|boleh|tolong|minta|kirim(?:in|kan)?|"
+            r"kasih|spill|share|drop|carikan|cariin|"
+            r"jelas(?:kan|in)|bantu(?:in)?|pakai|pake|"
+            r"gunakan|ganti|bahasa|dong)\b",
             text,
             re.I,
         ))
@@ -293,16 +318,20 @@ def addressed_question(message, bot):
 
 def social_reply(text):
     if re.search(
-        r"\b(?:bt(?:\s*(?:grup|group|gc)(?:nya)?)?|barter(?:\s*(?:grup|group|gc))?)\b",
+        r"\b(?:bt(?:\s*(?:grup|group|gc)(?:nya)?)?|"
+        r"barter(?:\s*(?:grup|group|gc))?)\b",
         text,
         re.I,
     ):
         return "Bt apa sih le?"
 
     greeting = re.match(
-        r"^\s*(?:@\w+\s+)?(?:(?:min|admin|ler|bang|bro|le|emak|mak)[\s,:!.-]+)?"
-        r"(?:selamat\s+)?(?:halo|hallo|helo|hello|hai|hay|hi|hy|hey|hei|yo|oy|woi|"
-        r"ass?alamu['’\s-]*alaikum|salam|permisi|pagi|siang|sore|malam)\b",
+        r"^\s*(?:@\w+\s+)?"
+        r"(?:(?:min|admin|ler|bang|bro|le|emak|mak)[\s,:!.-]+)?"
+        r"(?:selamat\s+)?"
+        r"(?:halo|hallo|helo|hello|hai|hay|hi|hy|hey|hei|"
+        r"yo|oy|woi|ass?alamu['’\s-]*alaikum|salam|"
+        r"permisi|pagi|siang|sore|malam)\b",
         text,
         re.I,
     )
@@ -314,8 +343,10 @@ def social_reply(text):
             text[greeting.end():],
             flags=re.I,
         )
+
         tail = re.sub(
-            r"\b(min|admin|ler|bang|bro|gan|guys|semua|le|emak|mak)\b",
+            r"\b(min|admin|ler|bang|bro|gan|guys|semua|"
+            r"le|emak|mak)\b",
             "",
             tail,
             flags=re.I,
@@ -333,7 +364,8 @@ def social_reply(text):
             ))
 
     if re.fullmatch(
-        r"\s*(min|admin|bot|mcm|emak|mak)(?:\s+(ler|bang|bro|gan|le))?[\s!?.]*",
+        r"\s*(min|admin|bot|mcm|emak|mak)"
+        r"(?:\s+(ler|bang|bro|gan|le))?[\s!?.]*",
         text,
         re.I,
     ):
@@ -358,20 +390,37 @@ class Settings:
     owner_id: int | None = None
     target_group_id: int | None = None
     welcome_enabled: bool = False
-    gemini_key: str = field(default="", repr=False, compare=False)
+
+    gemini_key: str = field(
+        default="",
+        repr=False,
+        compare=False,
+    )
+
     ai_model: str = "gemini-flash-latest"
     chat_mode: str = "addressed"
     ai_rpm: int = 4
     ai_provider: str = "openai"
-    openai_key: str = field(default="", repr=False, compare=False)
+
+    openai_key: str = field(
+        default="",
+        repr=False,
+        compare=False,
+    )
+
     openai_model: str = "gpt-5.5"
+    reply_timeout: float = 75
 
     @classmethod
     def from_env(cls):
-        url = os.environ.get("MCM_BACKUP_URL", cls.backup_url).strip()
+        url = os.environ.get(
+            "MCM_BACKUP_URL",
+            cls.backup_url,
+        ).strip()
 
         try:
             parsed = urlsplit(url)
+
             valid = (
                 parsed.scheme == "https"
                 and parsed.hostname
@@ -381,42 +430,72 @@ class Settings:
                 and not any(char.isspace() for char in url)
             )
 
-            cooldown = int(os.environ.get("MCM_NIMBRUNG_JEDA", "120"))
-            chance = float(os.environ.get("MCM_NIMBRUNG_PELUANG", "0.08"))
+            cooldown = int(
+                os.environ.get("MCM_NIMBRUNG_JEDA", "120")
+            )
+
+            chance = float(
+                os.environ.get("MCM_NIMBRUNG_PELUANG", "0.08")
+            )
 
             owner = os.environ.get("MCM_OWNER_ID", "").strip()
-            target = os.environ.get("MCM_TARGET_GROUP_ID", "").strip()
+            target = os.environ.get(
+                "MCM_TARGET_GROUP_ID",
+                "",
+            ).strip()
 
             owner_id = int(owner) if owner else None
             target_group_id = int(target) if target else None
-            ai_rpm = int(os.environ.get("MCM_AI_RPM", "4"))
+
+            ai_rpm = int(
+                os.environ.get("MCM_AI_RPM", "4")
+            )
+
+            reply_timeout = float(
+                os.environ.get("MCM_AI_REPLY_TIMEOUT", "75")
+            )
 
         except ValueError:
             raise SystemExit(
                 "Pengaturan URL/jeda/peluang MCM tidak valid."
             ) from None
 
-        if not valid or not 30 <= cooldown <= 3600 or not 0 <= chance <= 1:
+        if (
+            not valid
+            or not 30 <= cooldown <= 3600
+            or not 0 <= chance <= 1
+        ):
             raise SystemExit(
                 "Periksa URL HTTPS, jeda 30–3600, dan peluang 0–1."
             )
 
         if owner_id is not None and owner_id <= 0:
-            raise SystemExit("MCM_OWNER_ID harus berupa ID akun positif.")
+            raise SystemExit(
+                "MCM_OWNER_ID harus berupa ID akun positif."
+            )
 
         if target_group_id is not None and target_group_id >= 0:
-            raise SystemExit("MCM_TARGET_GROUP_ID harus berupa ID grup negatif.")
+            raise SystemExit(
+                "MCM_TARGET_GROUP_ID harus berupa ID grup negatif."
+            )
 
-        enabled = os.environ.get("MCM_NIMBRUNG", "on").lower() in (
-            "on", "true", "1"
-        )
-        welcome = os.environ.get("MCM_WELCOME", "off").lower() in (
-            "on", "true", "1"
-        )
+        enabled = os.environ.get(
+            "MCM_NIMBRUNG",
+            "on",
+        ).lower() in ("on", "true", "1")
+
+        welcome = os.environ.get(
+            "MCM_WELCOME",
+            "off",
+        ).lower() in ("on", "true", "1")
 
         key = os.environ.get("GEMINI_API_KEY", "").strip()
+
         model = (
-            os.environ.get("MCM_AI_MODEL", "gemini-flash-latest")
+            os.environ.get(
+                "MCM_AI_MODEL",
+                "gemini-flash-latest",
+            )
             .strip()
             .removeprefix("models/")
         )
@@ -443,7 +522,11 @@ class Settings:
             "openai",
         ).strip().lower()
 
-        openai_key = os.environ.get("OPENAI_API_KEY", "").strip()
+        openai_key = os.environ.get(
+            "OPENAI_API_KEY",
+            "",
+        ).strip()
+
         openai_model = os.environ.get(
             "MCM_OPENAI_MODEL",
             "gpt-5.5",
@@ -457,10 +540,27 @@ class Settings:
         if not re.fullmatch(r"[A-Za-z0-9_.-]+", openai_model):
             raise SystemExit("MCM_OPENAI_MODEL tidak valid.")
 
+        if not 5 <= reply_timeout <= 180:
+            raise SystemExit(
+                "MCM_AI_REPLY_TIMEOUT harus 5–180 detik."
+            )
+
         return cls(
-            url, enabled, cooldown, chance, owner_id, target_group_id,
-            welcome, key, model, mode, ai_rpm,
-            provider, openai_key, openai_model,
+            url,
+            enabled,
+            cooldown,
+            chance,
+            owner_id,
+            target_group_id,
+            welcome,
+            key,
+            model,
+            mode,
+            ai_rpm,
+            provider,
+            openai_key,
+            openai_model,
+            reply_timeout,
         )
 
 
@@ -471,12 +571,19 @@ class GeminiChat:
     request_timeout = 20
 
     def __init__(
-        self, key, model, *, rpm=4, transport=None, clock=time.monotonic
+        self,
+        key,
+        model,
+        *,
+        rpm=4,
+        transport=None,
+        clock=time.monotonic,
     ):
         self.model = model
         self.clock = clock
         self.backoff_until = 0
         self.last_error = ""
+        self.last_failure = ""
         self.calls = deque()
         self.rpm = rpm
         self.budget_lock = asyncio.Lock()
@@ -520,16 +627,22 @@ class GeminiChat:
 
     def response_text(self, data):
         candidates = data.get("candidates", [])
+
         if not candidates:
             return ""
 
-        parts = candidates[0].get("content", {}).get("parts", [])
+        parts = candidates[0].get(
+            "content",
+            {},
+        ).get("parts", [])
 
         return "".join(
             part["text"]
             for part in parts
-            if isinstance(part.get("text"), str)
-            and not part.get("thought")
+            if (
+                isinstance(part.get("text"), str)
+                and not part.get("thought")
+            )
         )
 
     async def close(self):
@@ -544,16 +657,37 @@ class GeminiChat:
         delay = max(0, self.backoff_until - now)
 
         if len(self.calls) >= self.rpm:
-            delay = max(delay, self.calls[0] + 60 - now)
+            delay = max(
+                delay,
+                self.calls[0] + 60 - now,
+            )
 
         return delay
 
     async def reserve_call(self, wait, enabled):
         if not wait:
-            if self.budget_delay() > 0 or self.budget_lock.locked():
+            delay = self.budget_delay()
+            seconds = max(1, int(delay + 0.999))
+
+            if self.clock() < self.backoff_until:
                 self.last_error = (
-                    f"{self.name} sedang dijeda atau "
-                    "batas lokal tercapai; tunggu sebentar."
+                    f"{self.name} dijeda sekitar {seconds} "
+                    f"detik lagi. {self.last_failure}"
+                )
+                return False
+
+            if delay > 0:
+                self.last_error = (
+                    f"Batas lokal {self.rpm} permintaan/menit "
+                    f"tercapai; giliran berikutnya sekitar "
+                    f"{seconds} detik lagi."
+                )
+                return False
+
+            if self.budget_lock.locked():
+                self.last_error = (
+                    "Antrean AI sedang menunggu giliran. "
+                    "Coba lagi sebentar."
                 )
                 return False
 
@@ -573,12 +707,17 @@ class GeminiChat:
         return False
 
     async def answer(
-        self, history, *, wait_for_budget=False, enabled=lambda: True
+        self,
+        history,
+        *,
+        wait_for_budget=False,
+        enabled=lambda: True,
     ):
         history = list(history)[-8:]
 
         if history:
             latest = history[-1]
+
             if child_content_request(
                 latest.get("text", ""),
                 latest.get("reply_to", ""),
@@ -643,7 +782,10 @@ class GeminiChat:
         )
 
         try:
-            if not await self.reserve_call(wait_for_budget, enabled):
+            if not await self.reserve_call(
+                wait_for_budget,
+                enabled,
+            ):
                 return None
 
             async with asyncio.timeout(self.request_timeout):
@@ -656,7 +798,10 @@ class GeminiChat:
 
                     response = await self.client.post(
                         self.endpoint(),
-                        json=self.payload(history, instructions),
+                        json=self.payload(
+                            history,
+                            instructions,
+                        ),
                     )
 
                     if response.status_code != 200:
@@ -667,7 +812,8 @@ class GeminiChat:
                                 delay,
                                 min(
                                     float(response.headers.get(
-                                        "retry-after", "0"
+                                        "retry-after",
+                                        "0",
                                     )),
                                     3600,
                                 ),
@@ -675,14 +821,18 @@ class GeminiChat:
                         except ValueError:
                             pass
 
-                        self.backoff_until = self.clock() + delay
+                        self.backoff_until = (
+                            self.clock() + delay
+                        )
 
                         hints = {
                             401: (
                                 "API key tidak diterima. "
                                 "Periksa key untuk penyedia yang dipilih."
                             ),
-                            403: "Akses proyek/model belum diizinkan.",
+                            403: (
+                                "Akses proyek/model belum diizinkan."
+                            ),
                             404: (
                                 "Model belum tersedia untuk proyek ini. "
                                 "Periksa nama dan akses model."
@@ -699,9 +849,11 @@ class GeminiChat:
                         )
 
                         self.last_error = (
-                            f"{self.name} HTTP {response.status_code}. "
-                            f"{hint}"
+                            f"{self.name} HTTP "
+                            f"{response.status_code}. {hint}"
                         )
+
+                        self.last_failure = self.last_error
 
                         logger.warning(
                             "%s belum tersedia: HTTP %s",
@@ -722,7 +874,11 @@ class GeminiChat:
                     if (
                         not text
                         or LINK_PATTERN.search(text)
-                        or re.search(r"@(?:everyone|all|here)\b", text, re.I)
+                        or re.search(
+                            r"@(?:everyone|all|here)\b",
+                            text,
+                            re.I,
+                        )
                     ):
                         self.last_error = (
                             f"{self.name} tidak menghasilkan "
@@ -744,9 +900,11 @@ class GeminiChat:
             self.backoff_until = self.clock() + 60
 
             self.last_error = (
-                "Gangguan koneksi atau respons "
-                f"{self.name} ({type(error).__name__})."
+                f"Gangguan koneksi atau respons {self.name} "
+                f"({type(error).__name__})."
             )
+
+            self.last_failure = self.last_error
 
             logger.warning(
                 "%s tertunda: jenis=%s",
@@ -837,10 +995,12 @@ def contains_link(message):
     if promotional_buttons(message):
         return True
 
-    for entity in (
+    entities = (
         tuple(message.entities or ())
         + tuple(message.caption_entities or ())
-    ):
+    )
+
+    for entity in entities:
         if entity.type in (
             MessageEntity.URL,
             MessageEntity.TEXT_LINK,
@@ -848,7 +1008,9 @@ def contains_link(message):
             return True
 
     return bool(
-        LINK_PATTERN.search(message.text or message.caption or "")
+        LINK_PATTERN.search(
+            message.text or message.caption or ""
+        )
     )
 
 
@@ -867,14 +1029,22 @@ def forwarded_media(message):
         return False
 
     document = message.document
+
     file_media = document and (
-        (document.mime_type or "").startswith(("image/", "video/"))
-        or (document.file_name or "").lower().endswith(
-            (
-                ".jpg", ".jpeg", ".png", ".webp", ".gif",
-                ".mp4", ".mov", ".mkv", ".webm",
-            )
+        (document.mime_type or "").startswith(
+            ("image/", "video/")
         )
+        or (document.file_name or "").lower().endswith((
+            ".jpg",
+            ".jpeg",
+            ".png",
+            ".webp",
+            ".gif",
+            ".mp4",
+            ".mov",
+            ".mkv",
+            ".webm",
+        ))
     )
 
     return bool(
@@ -890,7 +1060,8 @@ def simple_reply(text):
     lower = text.lower()
 
     if re.search(
-        r"\b(meninggal|berduka|kecelakaan|bunuh diri|sakit parah)\b",
+        r"\b(meninggal|berduka|kecelakaan|"
+        r"bunuh diri|sakit parah)\b",
         lower,
     ):
         return None
@@ -899,7 +1070,8 @@ def simple_reply(text):
         return "Ok le"
 
     if re.search(
-        r"\b(video|film)\b.*\b(ga|gak|nggak|tidak)\s+bisa\b",
+        r"\b(video|film)\b.*"
+        r"\b(ga|gak|nggak|tidak)\s+bisa\b",
         lower,
     ):
         return (
@@ -908,7 +1080,8 @@ def simple_reply(text):
         )
 
     if re.search(
-        r"\b(kapan.*(?:update|upload|kirim)|jadwal.*(?:update|upload))\b",
+        r"\b(kapan.*(?:update|upload|kirim)|"
+        r"jadwal.*(?:update|upload))\b",
         lower,
     ):
         return (
@@ -916,13 +1089,19 @@ def simple_reply(text):
             "Pantengin grup dulu ya."
         )
 
-    if re.search(r"\b(cara|gimana|bagaimana)\b", lower):
+    if re.search(
+        r"\b(cara|gimana|bagaimana)\b",
+        lower,
+    ):
         return (
             "Bagian yang mana, le? Coba jelasin sedikit "
             "biar gue nggak salah nangkep."
         )
 
-    if re.fullmatch(r"\s*(ok|oke|okey|siap|sip|gas)[\s!.]*", lower):
+    if re.fullmatch(
+        r"\s*(ok|oke|okey|siap|sip|gas)[\s!.]*",
+        lower,
+    ):
         return "Siap le 😎"
 
     if re.search(r"\b(horor|horror)\b", lower):
@@ -941,14 +1120,18 @@ def simple_reply(text):
             "Gas bahas filmnya, le. Tapi endingnya dikunci dulu, kasihan yang belum nonton 😂",
         ))
 
-    if re.search(r"\b(wkwk\w*|haha\w*|hehe\w*)\b", lower):
+    if re.search(
+        r"\b(wkwk\w*|haha\w*|hehe\w*)\b",
+        lower,
+    ):
         return random.choice((
             "Wkwk, ada-ada aja lu, le 😂",
             "Lanjut le, obrolan lu pada rame juga 😂",
         ))
 
     if re.search(
-        r"\b(pagi|siang|sore|malam|halo|hallo|assalamualaikum)\b",
+        r"\b(pagi|siang|sore|malam|halo|hallo|"
+        r"assalamualaikum)\b",
         lower,
     ):
         return "Yo le, pada nongol nih. Lagi bahas apaan? 👋"
@@ -961,8 +1144,8 @@ def simple_reply(text):
 
     if "?" in lower:
         return (
-            "Maksud lu bagian yang mana, le? "
-            "Kasih sedikit konteks biar gue nggak asal jawab."
+            "Maksud lu bagian yang mana, le? Kasih sedikit "
+            "konteks biar gue nggak asal jawab."
         )
 
     return None
@@ -972,40 +1155,34 @@ class CommunityBot:
     def __init__(self, settings, *, clock=time.monotonic):
         self.settings = settings
         self.clock = clock
-
         self.admin_cache = {}
         self.welcomed = {}
         self.last_reply = {}
         self.chatter_overrides = {}
         self.last_reminder = {}
-
         self.queued_media = set()
         self.albums = {}
         self.media_lock = asyncio.Lock()
         self.next_media_time = 0
-
         self.history = {}
         self.ai_pending = {}
         self.last_user_reply = {}
         self.queued_replies = {}
-
         self.outgoing_locks = {}
         self.next_outgoing = {}
         self.conversation_locks = {}
-
+        self.member_reply_locks = {}
+        self.typing_state = {}
         self.seen_chat_messages = set()
         self.last_chat_notice = {}
         self.blocked_messages = set()
         self.last_child_warning = {}
         self.child_request_users = {}
-
         self.spam_seen = set()
         self.spam_muting = set()
         self.last_spam_warning = {}
-
         self.queued_texts = set()
         self.pending_texts = 0
-
         self.activity = {}
         self.observed_messages = set()
         self.guidance_last = {}
@@ -1020,7 +1197,8 @@ class CommunityBot:
                     settings.openai_model,
                     rpm=settings.ai_rpm,
                 )
-                if settings.openai_key else None
+                if settings.openai_key
+                else None
             )
         else:
             self.ai = (
@@ -1029,7 +1207,8 @@ class CommunityBot:
                     settings.ai_model,
                     rpm=settings.ai_rpm,
                 )
-                if settings.gemini_key else None
+                if settings.gemini_key
+                else None
             )
 
     @property
@@ -1078,12 +1257,19 @@ class CommunityBot:
             )
             return None
 
-        result = member.status in ("creator", "administrator")
+        result = member.status in (
+            "creator",
+            "administrator",
+        )
 
         if len(self.admin_cache) > 5000:
             self.admin_cache.clear()
 
-        self.admin_cache[key] = (self.clock() + 30, result)
+        self.admin_cache[key] = (
+            self.clock() + 30,
+            result,
+        )
+
         return result
 
     def forbidden_request(self, message):
@@ -1096,14 +1282,19 @@ class CommunityBot:
             return True
 
         user = message.from_user
-        key = (message.chat.id, user.id) if user is not None else None
+
+        key = (
+            (message.chat.id, user.id)
+            if user is not None
+            else None
+        )
 
         return bool(
             key is not None
             and update_requested(text)
-            and self.clock() - self.child_request_users.get(
-                key, -10000
-            ) < 300
+            and self.clock()
+            - self.child_request_users.get(key, -10000)
+            < 300
         )
 
     async def moderate(self, update, context):
@@ -1119,17 +1310,19 @@ class CommunityBot:
             if len(self.blocked_messages) >= 10000:
                 self.blocked_messages.clear()
 
-            self.blocked_messages.add(
-                (message.chat.id, message.message_id)
-            )
+            self.blocked_messages.add((
+                message.chat.id,
+                message.message_id,
+            ))
 
             if message.from_user is not None:
                 if len(self.child_request_users) >= 5000:
                     self.child_request_users.clear()
 
-                self.child_request_users[
-                    (message.chat.id, message.from_user.id)
-                ] = self.clock()
+                self.child_request_users[(
+                    message.chat.id,
+                    message.from_user.id,
+                )] = self.clock()
 
             try:
                 await message.delete()
@@ -1140,12 +1333,23 @@ class CommunityBot:
                     type(error).__name__,
                 )
 
-            if self.clock() - self.last_child_warning.get(
-                message.chat.id, -10000
-            ) >= 10:
-                self.last_child_warning[message.chat.id] = self.clock()
+            if (
+                self.clock()
+                - self.last_child_warning.get(
+                    message.chat.id,
+                    -10000,
+                )
+                >= 10
+            ):
+                self.last_child_warning[
+                    message.chat.id
+                ] = self.clock()
+
                 context.application.create_task(
-                    self.warn_child_request(message, context),
+                    self.warn_child_request(
+                        message,
+                        context,
+                    ),
                     update=update,
                 )
 
@@ -1154,17 +1358,24 @@ class CommunityBot:
         if message.is_automatic_forward:
             return
 
-        if not contains_link(message) and not forwarded_media(message):
+        if (
+            not contains_link(message)
+            and not forwarded_media(message)
+        ):
             return
 
         status = await self.admin_status(message, context)
+
         if status is not False:
             return
 
         is_button_spam = promotional_buttons(message)
 
         if is_button_spam:
-            identity = (message.chat.id, message.message_id)
+            identity = (
+                message.chat.id,
+                message.message_id,
+            )
 
             if identity in self.spam_seen:
                 raise ApplicationHandlerStop
@@ -1184,25 +1395,30 @@ class CommunityBot:
         try:
             await message.delete()
             deleted = True
+
         except TelegramError as error:
             logger.warning(
-                "Hapus pesan gagal: jenis=%s. Periksa izin hapus pesan.",
+                "Hapus pesan gagal: jenis=%s. "
+                "Periksa izin hapus pesan.",
                 type(error).__name__,
             )
 
         if is_button_spam:
             user = (
                 message.from_user
-                if message.sender_chat is None else None
+                if message.sender_chat is None
+                else None
             )
+
             key = (
                 (message.chat.id, user.id)
-                if user is not None else
-                (message.chat.id, None)
+                if user is not None
+                else (message.chat.id, None)
             )
 
             if key not in self.spam_muting:
                 self.spam_muting.add(key)
+
                 context.application.create_task(
                     self.mute_button_spammer(
                         message,
@@ -1216,12 +1432,18 @@ class CommunityBot:
         raise ApplicationHandlerStop
 
     async def mute_button_spammer(
-        self, message, context, key, deleted
+        self,
+        message,
+        context,
+        key,
+        deleted,
     ):
         result = ""
+
         user = (
             message.from_user
-            if message.sender_chat is None else None
+            if message.sender_chat is None
+            else None
         )
 
         try:
@@ -1236,7 +1458,9 @@ class CommunityBot:
                 )
 
             elif message.chat.type != "supergroup":
-                result = "Mute otomatis memerlukan supergroup, le."
+                result = (
+                    "Mute otomatis memerlukan supergroup, le."
+                )
 
             else:
                 try:
@@ -1245,7 +1469,10 @@ class CommunityBot:
                         user.id,
                     )
 
-                    if member.status in ("creator", "administrator"):
+                    if member.status in (
+                        "creator",
+                        "administrator",
+                    ):
                         result = (
                             "Pengirim sekarang admin; "
                             "mute tidak diterapkan."
@@ -1267,15 +1494,21 @@ class CommunityBot:
                         await context.bot.restrict_chat_member(
                             chat_id=message.chat.id,
                             user_id=user.id,
-                            permissions=ChatPermissions.no_permissions(),
+                            permissions=(
+                                ChatPermissions.no_permissions()
+                            ),
                             use_independent_chat_permissions=True,
                             until_date=(
                                 datetime.now(timezone.utc)
-                                + timedelta(minutes=SPAM_MUTE_MINUTES)
+                                + timedelta(
+                                    minutes=SPAM_MUTE_MINUTES
+                                )
                             ),
                         )
+
                         result = (
-                            f"Pengirim di-mute {SPAM_MUTE_MINUTES} menit."
+                            f"Pengirim di-mute "
+                            f"{SPAM_MUTE_MINUTES} menit."
                         )
 
                 except TelegramError as error:
@@ -1284,24 +1517,33 @@ class CommunityBot:
                         "Periksa izin batasi anggota.",
                         type(error).__name__,
                     )
+
                     result = (
-                        "Mute belum terkonfirmasi; "
-                        "admin perlu cek izin batasi anggota."
+                        "Mute belum terkonfirmasi; admin perlu "
+                        "cek izin batasi anggota."
                     )
 
-            if self.clock() - self.last_spam_warning.get(
-                message.chat.id, -10000
-            ) >= 10:
-                self.last_spam_warning[message.chat.id] = self.clock()
+            if (
+                self.clock()
+                - self.last_spam_warning.get(
+                    message.chat.id,
+                    -10000,
+                )
+                >= 10
+            ):
+                self.last_spam_warning[
+                    message.chat.id
+                ] = self.clock()
 
                 deletion = (
                     "Pesan sudah dihapus."
-                    if deleted else
-                    "Penghapusan pesan belum terkonfirmasi."
+                    if deleted
+                    else "Penghapusan pesan belum terkonfirmasi."
                 )
+
                 warning = (
-                    "Jangan kirim spam promosi bertombol di sini, le. "
-                    f"{deletion} {result}"
+                    "Jangan kirim spam promosi bertombol "
+                    f"di sini, le. {deletion} {result}"
                 )
 
                 try:
@@ -1312,6 +1554,7 @@ class CommunityBot:
                         bot=context.bot,
                         disable_web_page_preview=True,
                     )
+
                 except TelegramError as error:
                     logger.warning(
                         "Peringatan spam gagal: jenis=%s",
@@ -1330,6 +1573,7 @@ class CommunityBot:
                 bot=context.bot,
                 disable_web_page_preview=True,
             )
+
         except TelegramError as error:
             logger.warning(
                 "Teguran grup gagal: jenis=%s",
@@ -1341,13 +1585,20 @@ class CommunityBot:
 
         if (
             message is None
-            or message.chat.type not in ("group", "supergroup")
-            or not (message.new_chat_members or message.left_chat_member)
+            or message.chat.type not in (
+                "group",
+                "supergroup",
+            )
+            or not (
+                message.new_chat_members
+                or message.left_chat_member
+            )
         ):
             return
 
         try:
             await message.delete()
+
         except TelegramError as error:
             logger.warning(
                 "Hapus pesan layanan tertunda: jenis=%s",
@@ -1359,7 +1610,9 @@ class CommunityBot:
 
         if update.effective_chat.type == "private":
             await message.reply_text(
-                BACKUP_TEXT + "\n\n" + self.settings.backup_url,
+                BACKUP_TEXT
+                + "\n\n"
+                + self.settings.backup_url,
                 reply_markup=InlineKeyboardMarkup([[
                     InlineKeyboardButton(
                         "Buka link cadangan",
@@ -1368,11 +1621,14 @@ class CommunityBot:
                 ]]),
                 disable_web_page_preview=True,
             )
+
         else:
             await message.reply_text(
                 "Buka chat pribadi bot lalu tekan Start "
                 "untuk mengambil link cadangan.",
-                reply_markup=self.private_button(context.bot),
+                reply_markup=self.private_button(
+                    context.bot
+                ),
             )
 
     async def private_text(self, update, context):
@@ -1391,7 +1647,8 @@ class CommunityBot:
         if parsed is not None:
             if (
                 message.from_user is None
-                or message.from_user.id != self.settings.owner_id
+                or message.from_user.id
+                != self.settings.owner_id
             ):
                 await message.reply_text(
                     "Kirim teks ke grup hanya tersedia "
@@ -1407,6 +1664,7 @@ class CommunityBot:
                     message.entities,
                     start,
                 )
+
             else:
                 quoted = message.reply_to_message
 
@@ -1444,12 +1702,18 @@ class CommunityBot:
             )
 
     async def queue_owner_text(
-        self, message, update, context, text, entities
+        self,
+        message,
+        update,
+        context,
+        text,
+        entities,
     ):
         if (
             message.chat.type != "private"
             or message.from_user is None
-            or message.from_user.id != self.settings.owner_id
+            or message.from_user.id
+            != self.settings.owner_id
             or update.edited_message is not None
         ):
             return
@@ -1461,15 +1725,18 @@ class CommunityBot:
             )
             return
 
-        identity = (message.chat.id, message.message_id)
+        identity = (
+            message.chat.id,
+            message.message_id,
+        )
 
         if identity in self.queued_texts:
             return
 
         if self.pending_texts >= 50:
             await message.reply_text(
-                "Antrean kiriman teks penuh, le. "
-                "Tunggu konfirmasi kiriman sebelumnya dulu."
+                "Antrean kiriman teks penuh, le. Tunggu "
+                "konfirmasi kiriman sebelumnya dulu."
             )
             return
 
@@ -1490,7 +1757,11 @@ class CommunityBot:
         )
 
     async def deliver_owner_text(
-        self, message, context, text, entities
+        self,
+        message,
+        context,
+        text,
+        entities,
     ):
         target = self.settings.target_group_id
 
@@ -1498,15 +1769,18 @@ class CommunityBot:
             if (
                 target is None
                 or message.chat.type != "private"
-                or message.from_user.id != self.settings.owner_id
+                or message.from_user.id
+                != self.settings.owner_id
             ):
                 return
 
             chat = await context.bot.get_chat(target)
+
             owner = await context.bot.get_chat_member(
                 target,
                 self.settings.owner_id,
             )
+
             bot_member = await context.bot.get_chat_member(
                 target,
                 context.bot.id,
@@ -1514,8 +1788,14 @@ class CommunityBot:
 
             if (
                 chat.type not in ("group", "supergroup")
-                or owner.status not in ("creator", "administrator")
-                or bot_member.status not in ("creator", "administrator")
+                or owner.status not in (
+                    "creator",
+                    "administrator",
+                )
+                or bot_member.status not in (
+                    "creator",
+                    "administrator",
+                )
             ):
                 await message.reply_text(
                     "Akun lu dan bot harus jadi admin "
@@ -1548,7 +1828,11 @@ class CommunityBot:
                                 if hasattr(wait, "total_seconds")
                                 else float(wait)
                             )
-                            self.record_wait(target, wait + 1)
+
+                            self.record_wait(
+                                target,
+                                wait + 1,
+                            )
 
                             if attempt or wait > 45:
                                 raise
@@ -1573,11 +1857,13 @@ class CommunityBot:
                     "Cek grup dulu sebelum mengulang; "
                     "pesan mungkin sudah masuk."
                 )
+
             elif isinstance(error, RetryAfter):
                 notice = (
                     "Telegram sedang membatasi kiriman, le. "
                     "Tunggu dulu sebelum mengirim ulang."
                 )
+
             else:
                 notice = (
                     "Teks belum berhasil dikirim. "
@@ -1594,6 +1880,7 @@ class CommunityBot:
                 await message.reply_text(
                     "Beres le, teks sudah dikirim ke grup."
                 )
+
             except TelegramError as error:
                 logger.warning(
                     "Konfirmasi kiriman teks gagal: jenis=%s",
@@ -1610,11 +1897,16 @@ class CommunityBot:
             await message.reply_text(
                 f"ID akun kamu: {message.from_user.id}"
             )
-        elif await self.admin_status(message, context) is True:
+
+        elif await self.admin_status(
+            message,
+            context,
+        ) is True:
             await message.reply_text(
                 f"ID grup: {message.chat.id}\n"
                 "Salin lengkap termasuk tanda minus."
             )
+
         else:
             await message.reply_text(
                 "Minta admin grup yang menjalankan /id ya, le."
@@ -1623,17 +1915,24 @@ class CommunityBot:
     async def remove_welcome(self, update, context):
         message = update.effective_message
 
-        if message.chat.type not in ("group", "supergroup"):
+        if message.chat.type not in (
+            "group",
+            "supergroup",
+        ):
             await message.reply_text(
                 "Balas pesan welcome lama di grup "
                 "dengan /hapuswelcome ya, le."
             )
             return
 
-        if await self.admin_status(message, context) is not True:
+        if await self.admin_status(
+            message,
+            context,
+        ) is not True:
             return
 
         target = message.reply_to_message
+
         normalized = (
             " ".join(
                 (target.text or "")
@@ -1641,7 +1940,8 @@ class CommunityBot:
                 .replace(",", " ")
                 .split()
             )
-            if target else ""
+            if target
+            else ""
         )
 
         if (
@@ -1662,6 +1962,7 @@ class CommunityBot:
         try:
             await target.delete()
             await message.delete()
+
         except TelegramError as error:
             logger.warning(
                 "Hapus welcome lama tertunda: jenis=%s",
@@ -1693,21 +1994,36 @@ class CommunityBot:
                 if self.settings.ai_provider == "openai"
                 else "GEMINI_API_KEY"
             )
+
             await message.reply_text(
                 f"{self.ai_name} belum diatur. "
-                f"Isi {key_name} di Variables Railway lalu deploy."
+                f"Isi {key_name} di Variables Railway "
+                "lalu deploy."
             )
             return
 
+        started = self.clock()
+
         response = await self.ai.answer([{
             "speaker": "member",
-            "text": "Sapa gue singkat untuk memastikan bot tersambung.",
+            "text": (
+                "Sapa gue singkat untuk memastikan "
+                "bot tersambung."
+            ),
         }])
+
+        duration = (
+            f"\nWaktu tes: "
+            f"{self.clock() - started:.1f} detik."
+        )
 
         if response:
             await message.reply_text(
-                f"{self.ai_name} berhasil membalas:\n" + response
+                f"{self.ai_name} berhasil membalas:\n"
+                + response
+                + duration
             )
+
         else:
             await message.reply_text(
                 f"{self.ai_name} belum berhasil membalas.\n"
@@ -1716,6 +2032,7 @@ class CommunityBot:
                     "last_error",
                     "Periksa API key, model, kuota, dan Deploy Logs.",
                 )
+                + duration
             )
 
     async def private_media(self, update, context):
@@ -1742,7 +2059,10 @@ class CommunityBot:
             )
             return
 
-        identity = (message.chat.id, message.message_id)
+        identity = (
+            message.chat.id,
+            message.message_id,
+        )
 
         if identity in self.queued_media:
             return
@@ -1753,19 +2073,25 @@ class CommunityBot:
         self.queued_media.add(identity)
 
         if message.media_group_id:
-            key = (message.chat.id, message.media_group_id)
+            key = (
+                message.chat.id,
+                message.media_group_id,
+            )
 
             if key not in self.albums:
                 self.albums[key] = {
                     "ids": set(),
                     "message": message,
                 }
+
                 context.application.create_task(
                     self.flush_album(key, context),
                     update=update,
                 )
 
-            self.albums[key]["ids"].add(message.message_id)
+            self.albums[key]["ids"].add(
+                message.message_id
+            )
 
         else:
             context.application.create_task(
@@ -1788,23 +2114,31 @@ class CommunityBot:
                 context,
             )
 
-    async def send_media(self, message, message_ids, context):
+    async def send_media(
+        self,
+        message,
+        message_ids,
+        context,
+    ):
         target = self.settings.target_group_id
 
         if (
             target is None
             or message.chat.type != "private"
-            or message.from_user.id != self.settings.owner_id
+            or message.from_user.id
+            != self.settings.owner_id
         ):
             return
 
         async with self.media_lock:
             try:
                 chat = await context.bot.get_chat(target)
+
                 owner = await context.bot.get_chat_member(
                     target,
                     self.settings.owner_id,
                 )
+
                 bot_member = await context.bot.get_chat_member(
                     target,
                     context.bot.id,
@@ -1812,8 +2146,14 @@ class CommunityBot:
 
                 if (
                     chat.type not in ("group", "supergroup")
-                    or owner.status not in ("creator", "administrator")
-                    or bot_member.status not in ("creator", "administrator")
+                    or owner.status not in (
+                        "creator",
+                        "administrator",
+                    )
+                    or bot_member.status not in (
+                        "creator",
+                        "administrator",
+                    )
                 ):
                     await message.reply_text(
                         "Akun lu dan bot harus jadi admin "
@@ -1833,6 +2173,7 @@ class CommunityBot:
                         "Media tidak dapat disalin Telegram. "
                         "Periksa apakah sumbernya dilindungi."
                     )
+
                 else:
                     text = (
                         f"Beres le, {len(copied)} media "
@@ -1841,7 +2182,8 @@ class CommunityBot:
 
                     if len(copied) < len(message_ids):
                         text += (
-                            " Sebagian media tidak dapat disalin Telegram."
+                            " Sebagian media tidak dapat "
+                            "disalin Telegram."
                         )
 
                     await message.reply_text(text)
@@ -1862,10 +2204,11 @@ class CommunityBot:
                     and not isinstance(error, BadRequest)
                 ):
                     text = (
-                        "Koneksi putus saat kirim. Cek grup dulu "
-                        "sebelum mengulang; medianya mungkin "
-                        "sudah terkirim, le."
+                        "Koneksi putus saat kirim. Cek grup "
+                        "dulu sebelum mengulang; medianya "
+                        "mungkin sudah terkirim, le."
                     )
+
                 elif isinstance(error, RetryAfter):
                     text = (
                         "Telegram sedang membatasi kiriman. "
@@ -1881,7 +2224,10 @@ class CommunityBot:
         next_time = self.next_outgoing.get(chat_id, 0)
 
         if chat_id == self.settings.target_group_id:
-            next_time = max(next_time, self.next_media_time)
+            next_time = max(
+                next_time,
+                self.next_media_time,
+            )
 
         delay = next_time - self.clock()
 
@@ -1901,8 +2247,13 @@ class CommunityBot:
             )
 
     async def send_group_text(
-        self, message, text, *,
-        moderation=False, bot=None, **kwargs
+        self,
+        message,
+        text,
+        *,
+        moderation=False,
+        bot=None,
+        **kwargs,
     ):
         chat_id = message.chat.id
 
@@ -1917,7 +2268,10 @@ class CommunityBot:
                     chat_id,
                     self.settings.chatter_enabled,
                 )
-                or (chat_id, message.message_id) in self.blocked_messages
+                or (
+                    chat_id,
+                    message.message_id,
+                ) in self.blocked_messages
             ):
                 return None
 
@@ -1930,7 +2284,11 @@ class CommunityBot:
                                 text=text,
                                 **kwargs,
                             )
-                        return await message.reply_text(text, **kwargs)
+
+                        return await message.reply_text(
+                            text,
+                            **kwargs,
+                        )
 
                     except RetryAfter as error:
                         wait = error.retry_after
@@ -1940,7 +2298,10 @@ class CommunityBot:
                             else float(wait)
                         )
 
-                        self.record_wait(chat_id, wait + 1)
+                        self.record_wait(
+                            chat_id,
+                            wait + 1,
+                        )
 
                         if attempt or wait > 45:
                             raise
@@ -1951,7 +2312,11 @@ class CommunityBot:
                 self.record_wait(chat_id, 3.5)
 
     async def copy_media_to_group(
-        self, message, message_ids, context, target
+        self,
+        message,
+        message_ids,
+        context,
+        target,
     ):
         async with self.outgoing_locks.setdefault(
             target,
@@ -1966,6 +2331,7 @@ class CommunityBot:
                         from_chat_id=message.chat.id,
                         message_ids=sorted(set(message_ids)),
                     )
+
                     self.record_wait(
                         target,
                         3.5 * max(len(copied), 1),
@@ -1980,7 +2346,10 @@ class CommunityBot:
                         else float(wait)
                     )
 
-                    self.record_wait(target, wait + 1)
+                    self.record_wait(
+                        target,
+                        wait + 1,
+                    )
 
                     if attempt or wait > 45:
                         raise
@@ -2006,7 +2375,10 @@ class CommunityBot:
 
             if (
                 not user.is_bot
-                and now - self.welcomed.get(key, -1000) >= 20
+                and now - self.welcomed.get(
+                    key,
+                    -1000,
+                ) >= 20
             ):
                 self.welcomed[key] = now
                 fresh.append(key)
@@ -2018,8 +2390,11 @@ class CommunityBot:
             await context.bot.send_message(
                 chat_id=chat_id,
                 text=WELCOME,
-                reply_markup=self.private_button(context.bot),
+                reply_markup=self.private_button(
+                    context.bot
+                ),
             )
+
         except TelegramError:
             for key in fresh:
                 self.welcomed.pop(key, None)
@@ -2027,6 +2402,7 @@ class CommunityBot:
 
     async def welcome(self, update, context):
         message = update.effective_message
+
         await self.greet(
             message.chat.id,
             message.new_chat_members,
@@ -2062,7 +2438,10 @@ class CommunityBot:
         if (
             message is None
             or update.edited_message is not None
-            or message.chat.type not in ("group", "supergroup")
+            or message.chat.type not in (
+                "group",
+                "supergroup",
+            )
             or message.sender_chat is not None
             or message.from_user is None
             or message.from_user.is_bot
@@ -2115,8 +2494,10 @@ class CommunityBot:
             return
 
         response = simple_reply(text)
+
         sensitive = re.search(
-            r"\b(meninggal|berduka|kecelakaan|bunuh diri|sakit parah)\b",
+            r"\b(meninggal|berduka|kecelakaan|"
+            r"bunuh diri|sakit parah)\b",
             text.lower(),
         )
 
@@ -2128,6 +2509,7 @@ class CommunityBot:
         if message.chat.id not in self.history:
             if len(self.history) >= 1000:
                 self.history.pop(next(iter(self.history)))
+
             self.history[message.chat.id] = deque(maxlen=8)
 
         self.history[message.chat.id].append({
@@ -2137,19 +2519,29 @@ class CommunityBot:
 
         reply = message.reply_to_message
         replied_user = reply.from_user if reply else None
+
         mentioned = (
-            f"@{context.bot.username.lower()}" in text.lower()
+            f"@{context.bot.username.lower()}"
+            in text.lower()
         )
+
         addressed = bool(re.search(
             r"\b(min|admin|bot|mcm|emak|mak)\b",
             text.lower(),
         ))
-        question = question_like(text) or (
-            addressed and bool(re.search(
-                r"\b(boleh|bisa|tolong|dong|ada|kirim|upload|share)\b",
-                text.lower(),
-            ))
+
+        question = (
+            question_like(text)
+            or (
+                addressed
+                and bool(re.search(
+                    r"\b(boleh|bisa|tolong|dong|ada|"
+                    r"kirim|upload|share)\b",
+                    text.lower(),
+                ))
+            )
         )
+
         directed = (
             mentioned
             or (
@@ -2158,15 +2550,21 @@ class CommunityBot:
             )
             or (addressed and question)
         )
+
         wants_backup = bool(BACKUP_QUERY.search(text))
+
         priority = bool(
-            social or question or directed
-            or wants_backup or update_requested(text)
+            social
+            or question
+            or directed
+            or wants_backup
+            or update_requested(text)
         )
 
         if response is None:
             if not priority and self.ai is None:
                 return
+
             response = (
                 "Maksud lu bagian yang mana, le? "
                 "Kasih sedikit konteks ya."
@@ -2174,6 +2572,7 @@ class CommunityBot:
 
         now = self.clock()
         self.last_reminder.setdefault(message.chat.id, now)
+
         user_key = (
             message.chat.id,
             message.from_user.id,
@@ -2181,22 +2580,40 @@ class CommunityBot:
         )
 
         if priority:
-            if now - self.last_user_reply.get(user_key, -10000) < 5:
+            if (
+                now
+                - self.last_user_reply.get(
+                    user_key,
+                    -10000,
+                )
+                < 5
+            ):
                 return
+
         else:
-            if now - self.last_reply.get(
-                message.chat.id, -10000
-            ) < self.settings.cooldown:
+            if (
+                now
+                - self.last_reply.get(
+                    message.chat.id,
+                    -10000,
+                )
+                < self.settings.cooldown
+            ):
                 return
+
             if (
                 random.random() >= self.settings.chance
-                or self.queued_replies.get(message.chat.id, 0)
+                or self.queued_replies.get(
+                    message.chat.id,
+                    0,
+                )
             ):
                 return
 
         if self.queued_replies.get(message.chat.id, 0) >= 30:
             logger.warning(
-                "Antrean balasan grup penuh; moderasi tetap berjalan."
+                "Antrean balasan grup penuh; "
+                "moderasi tetap berjalan."
             )
             return
 
@@ -2205,40 +2622,60 @@ class CommunityBot:
 
         self.last_user_reply[user_key] = now
         self.last_reply[message.chat.id] = now
+
         reminder_due = (
-            now - self.last_reminder[message.chat.id] >= 1800
+            now
+            - self.last_reminder[message.chat.id]
+            >= 1800
         )
 
         if social:
             kind, response = "text", social
+
         elif wants_backup or (
             not priority
             and reminder_due
             and random.random() < 0.2
         ):
-            kind, response = "backup", random.choice(BACKUP_REMINDERS)
+            kind = "backup"
+            response = random.choice(BACKUP_REMINDERS)
             self.last_reminder[message.chat.id] = now
+
         elif update_requested(text):
             kind, response = (
                 ("ai", None)
-                if self.ai is not None else
-                ("text", "Ok pantau grup aja le")
+                if self.ai is not None
+                else ("text", "Ok pantau grup aja le")
             )
+
             if kind == "ai":
                 self.ai_pending[message.chat.id] = (
-                    self.ai_pending.get(message.chat.id, 0) + 1
+                    self.ai_pending.get(
+                        message.chat.id,
+                        0,
+                    ) + 1
                 )
+
         elif self.ai is not None:
             kind = "ai"
+
             self.ai_pending[message.chat.id] = (
-                self.ai_pending.get(message.chat.id, 0) + 1
+                self.ai_pending.get(
+                    message.chat.id,
+                    0,
+                ) + 1
             )
+
         else:
             kind = "text"
 
         self.queued_replies[message.chat.id] = (
-            self.queued_replies.get(message.chat.id, 0) + 1
+            self.queued_replies.get(
+                message.chat.id,
+                0,
+            ) + 1
         )
+
         context.application.create_task(
             self.deliver_chat_reply(
                 message,
@@ -2252,10 +2689,18 @@ class CommunityBot:
         )
 
     async def addressed_chatter(
-        self, message, update, context, text
+        self,
+        message,
+        update,
+        context,
+        text,
     ):
         chat_id = message.chat.id
-        identity = (chat_id, message.message_id)
+
+        identity = (
+            chat_id,
+            message.message_id,
+        )
 
         if identity in self.observed_messages:
             return
@@ -2266,15 +2711,22 @@ class CommunityBot:
         self.observed_messages.add(identity)
         self.cancel_unanswered(chat_id)
 
-        sequence = self.activity_sequence.get(chat_id, 0) + 1
+        sequence = (
+            self.activity_sequence.get(chat_id, 0)
+            + 1
+        )
         self.activity_sequence[chat_id] = sequence
 
         now = self.clock()
+
         events = self.activity.setdefault(
             chat_id,
             deque(maxlen=100),
         )
-        events.append((now, message.from_user.id))
+        events.append((
+            now,
+            message.from_user.id,
+        ))
 
         while events and now - events[0][0] >= 60:
             events.popleft()
@@ -2282,7 +2734,10 @@ class CommunityBot:
         if text:
             if chat_id not in self.history:
                 if len(self.history) >= 1000:
-                    self.history.pop(next(iter(self.history)))
+                    self.history.pop(
+                        next(iter(self.history))
+                    )
+
                 self.history[chat_id] = deque(maxlen=8)
 
             self.history[chat_id].append({
@@ -2302,18 +2757,26 @@ class CommunityBot:
 
         busy = (
             len(events) >= 10
-            and len({user_id for _, user_id in events}) >= 3
+            and len({
+                user_id
+                for _, user_id in events
+            }) >= 3
         )
 
         if busy and self.guidance_due(chat_id):
             self.guidance_pending.add(chat_id)
+
             context.application.create_task(
-                self.deliver_guidance(message, context),
+                self.deliver_guidance(
+                    message,
+                    context,
+                ),
                 update=update,
             )
 
         elif text and (
-            question_like(text) or update_requested(text)
+            question_like(text)
+            or update_requested(text)
         ):
             task = asyncio.create_task(
                 self.unanswered_guidance(
@@ -2322,6 +2785,7 @@ class CommunityBot:
                     sequence,
                 )
             )
+
             self.unanswered_tasks[chat_id] = task
 
     def guidance_due(self, chat_id):
@@ -2334,16 +2798,20 @@ class CommunityBot:
             )
             and chat_id not in self.guidance_pending
             and not self.queued_replies.get(chat_id, 0)
-            and now - self.guidance_last.get(
-                chat_id, -10000
-            ) >= GUIDANCE_COOLDOWN
-            and now - self.last_reply.get(
-                chat_id, -10000
-            ) >= 300
+            and now
+            - self.guidance_last.get(chat_id, -10000)
+            >= GUIDANCE_COOLDOWN
+            and now
+            - self.last_reply.get(chat_id, -10000)
+            >= 300
         )
 
     def cancel_unanswered(self, chat_id):
-        task = self.unanswered_tasks.pop(chat_id, None)
+        task = self.unanswered_tasks.pop(
+            chat_id,
+            None,
+        )
+
         if task is not None:
             task.cancel()
 
@@ -2361,7 +2829,10 @@ class CommunityBot:
             )
 
     async def unanswered_guidance(
-        self, message, context, sequence
+        self,
+        message,
+        context,
+        sequence,
     ):
         chat_id = message.chat.id
 
@@ -2369,7 +2840,8 @@ class CommunityBot:
             await asyncio.sleep(GUIDANCE_DELAY)
 
             if (
-                self.activity_sequence.get(chat_id) != sequence
+                self.activity_sequence.get(chat_id)
+                != sequence
                 or not getattr(
                     context.application,
                     "running",
@@ -2380,14 +2852,21 @@ class CommunityBot:
                 return
 
             self.guidance_pending.add(chat_id)
-            await self.deliver_guidance(message, context)
+
+            await self.deliver_guidance(
+                message,
+                context,
+            )
 
         finally:
             if (
                 self.unanswered_tasks.get(chat_id)
                 is asyncio.current_task()
             ):
-                self.unanswered_tasks.pop(chat_id, None)
+                self.unanswered_tasks.pop(
+                    chat_id,
+                    None,
+                )
 
     async def deliver_guidance(self, message, context):
         chat_id = message.chat.id
@@ -2411,12 +2890,18 @@ class CommunityBot:
                         True,
                     )
                     or self.queued_replies.get(chat_id, 0)
-                    or now - self.guidance_last.get(
-                        chat_id, -10000
-                    ) < GUIDANCE_COOLDOWN
-                    or now - self.last_reply.get(
-                        chat_id, -10000
-                    ) < 300
+                    or now
+                    - self.guidance_last.get(
+                        chat_id,
+                        -10000,
+                    )
+                    < GUIDANCE_COOLDOWN
+                    or now
+                    - self.last_reply.get(
+                        chat_id,
+                        -10000,
+                    )
+                    < 300
                 ):
                     return
 
@@ -2434,11 +2919,18 @@ class CommunityBot:
                         if hasattr(wait, "total_seconds")
                         else float(wait)
                     )
-                    self.record_wait(chat_id, wait + 1)
+
+                    self.record_wait(
+                        chat_id,
+                        wait + 1,
+                    )
                     raise
 
                 finally:
-                    self.guidance_last[chat_id] = self.clock()
+                    self.guidance_last[
+                        chat_id
+                    ] = self.clock()
+
                     self.record_wait(chat_id, 3.5)
 
         except TelegramError as error:
@@ -2451,11 +2943,20 @@ class CommunityBot:
             self.guidance_pending.discard(chat_id)
 
     async def queue_every_message(
-        self, message, update, context, text, *,
-        history_recorded=False
+        self,
+        message,
+        update,
+        context,
+        text,
+        *,
+        history_recorded=False,
     ):
         chat_id = message.chat.id
-        identity = (chat_id, message.message_id)
+
+        identity = (
+            chat_id,
+            message.message_id,
+        )
 
         if identity in self.seen_chat_messages:
             return
@@ -2473,15 +2974,22 @@ class CommunityBot:
                 "Balasan AI belum tersedia: %s.",
                 (
                     "API key belum diisi"
-                    if self.ai is None else
-                    "antrean 100 pesan penuh"
+                    if self.ai is None
+                    else "antrean 100 pesan penuh"
                 ),
             )
 
-            if self.clock() - self.last_chat_notice.get(
-                chat_id, -10000
-            ) >= 60:
-                self.last_chat_notice[chat_id] = self.clock()
+            if (
+                self.clock()
+                - self.last_chat_notice.get(
+                    chat_id,
+                    -10000,
+                )
+                >= 60
+            ):
+                self.last_chat_notice[
+                    chat_id
+                ] = self.clock()
 
                 key_name = (
                     "OPENAI_API_KEY"
@@ -2492,20 +3000,27 @@ class CommunityBot:
                 notice = (
                     f"{self.ai_name} belum diatur, le. "
                     f"Admin perlu isi {key_name} di Railway."
-                    if self.ai is None else
-                    "Antrean AI penuh, le. Beberapa pesan belum masuk; "
-                    "coba kirim lagi nanti ya."
+                    if self.ai is None
+                    else (
+                        "Antrean AI penuh, le. Beberapa pesan "
+                        "belum masuk; coba kirim lagi nanti ya."
+                    )
                 )
 
                 context.application.create_task(
-                    self.chat_notice(message, notice),
+                    self.chat_notice(
+                        message,
+                        notice,
+                    ),
                     update=update,
                 )
+
             return
 
         if chat_id not in self.history:
             if len(self.history) >= 1000:
                 self.history.pop(next(iter(self.history)))
+
             self.history[chat_id] = deque(maxlen=8)
 
         if not history_recorded:
@@ -2524,13 +3039,18 @@ class CommunityBot:
             )
 
         self.queued_replies[chat_id] = (
-            self.queued_replies.get(chat_id, 0) + 1
+            self.queued_replies.get(
+                chat_id,
+                0,
+            ) + 1
         )
+
         context.application.create_task(
             self.deliver_every_message(
                 message,
                 context,
                 history,
+                queued_at=self.clock(),
             ),
             update=update,
         )
@@ -2542,16 +3062,123 @@ class CommunityBot:
                 text,
                 disable_web_page_preview=True,
             )
+
         except TelegramError as error:
             logger.warning(
                 "Pemberitahuan AI gagal: jenis=%s",
                 type(error).__name__,
             )
 
+    def start_typing(self, chat_id, context):
+        if not callable(
+            getattr(
+                context.bot,
+                "send_chat_action",
+                None,
+            )
+        ):
+            return None
+
+        state = self.typing_state.get(chat_id)
+
+        if state is None or state["task"].done():
+            state = {
+                "users": 0,
+                "done": asyncio.Event(),
+            }
+
+            state["task"] = asyncio.create_task(
+                self.show_typing(
+                    chat_id,
+                    context,
+                    state,
+                )
+            )
+
+            self.typing_state[chat_id] = state
+
+        state["users"] += 1
+        return state
+
+    async def stop_typing(self, chat_id, state):
+        if state is None:
+            return
+
+        state["users"] -= 1
+
+        if state["users"] <= 0:
+            if self.typing_state.get(chat_id) is state:
+                self.typing_state.pop(
+                    chat_id,
+                    None,
+                )
+
+            state["done"].set()
+            state["task"].cancel()
+
+            await asyncio.gather(
+                state["task"],
+                return_exceptions=True,
+            )
+
+    async def show_typing(
+        self,
+        chat_id,
+        context,
+        state,
+    ):
+        while (
+            not state["done"].is_set()
+            and getattr(
+                context.application,
+                "running",
+                True,
+            )
+        ):
+            try:
+                async with asyncio.timeout(2):
+                    await context.bot.send_chat_action(
+                        chat_id=chat_id,
+                        action="typing",
+                    )
+
+            except (TelegramError, TimeoutError):
+                return
+
+            try:
+                await asyncio.wait_for(
+                    state["done"].wait(),
+                    timeout=4,
+                )
+
+            except TimeoutError:
+                pass
+
     async def deliver_every_message(
-        self, message, context, history
+        self,
+        message,
+        context,
+        history,
+        *,
+        queued_at=None,
     ):
         chat_id = message.chat.id
+
+        queued_at = (
+            self.clock()
+            if queued_at is None
+            else queued_at
+        )
+
+        deadline = (
+            queued_at
+            + self.settings.reply_timeout
+        )
+
+        started = self.clock()
+        ai_seconds = 0
+        outcome = "dibatalkan"
+        typing = None
 
         def enabled():
             return (
@@ -2571,42 +3198,101 @@ class CommunityBot:
             )
 
         try:
-            async with self.conversation_locks.setdefault(
+            if not enabled():
+                return
+
+            typing = self.start_typing(
                 chat_id,
-                asyncio.Lock(),
-            ):
-                if not enabled():
-                    return
+                context,
+            )
 
-                response = await self.ai.answer(
-                    history,
-                    wait_for_budget=True,
-                    enabled=enabled,
-                )
-
-                if not enabled():
-                    return
-
-                if response is None:
-                    await self.chat_notice(
-                        message,
-                        "Emak lagi terkendala sambungan AI, le. "
-                        "Coba lagi sebentar ya.",
+            try:
+                async with asyncio.timeout(
+                    max(
+                        0.001,
+                        deadline - self.clock(),
                     )
-                    return
+                ):
+                    member_key = (
+                        chat_id,
+                        message.from_user.id,
+                    )
 
-                sent = await self.send_group_text(
-                    message,
-                    response,
-                    disable_web_page_preview=True,
+                    async with self.member_reply_locks.setdefault(
+                        member_key,
+                        asyncio.Lock(),
+                    ):
+                        async with self.conversation_locks.setdefault(
+                            chat_id,
+                            asyncio.Semaphore(2),
+                        ):
+                            if not enabled():
+                                return
+
+                            started = self.clock()
+
+                            response = await self.ai.answer(
+                                history,
+                                wait_for_budget=True,
+                                enabled=enabled,
+                            )
+
+                            ai_seconds = (
+                                self.clock() - started
+                            )
+
+                outcome = (
+                    "jawaban"
+                    if response is not None
+                    else "AI_belum_tersedia"
                 )
 
-                if sent is not None and chat_id in self.history:
-                    self.last_reply[chat_id] = self.clock()
-                    self.history[chat_id].append({
-                        "speaker": "bot",
-                        "text": response,
-                    })
+            except TimeoutError:
+                ai_seconds = self.clock() - started
+                response = None
+                outcome = "batas_waktu"
+
+            if not enabled():
+                return
+
+            if response is None:
+                await self.chat_notice(
+                    message,
+                    "Emak lagi terkendala sambungan atau "
+                    "antrean AI, le. Coba lagi sebentar ya.",
+                )
+                return
+
+            send_started = self.clock()
+
+            sent = await self.send_group_text(
+                message,
+                response,
+                disable_web_page_preview=True,
+            )
+
+            if (
+                sent is not None
+                and chat_id in self.history
+            ):
+                self.last_reply[
+                    chat_id
+                ] = self.clock()
+
+                self.history[chat_id].append({
+                    "speaker": "bot",
+                    "text": response,
+                })
+
+            logger.info(
+                "Balasan %s: antre=%.1fs AI=%.1fs "
+                "kirim=%.1fs hasil=%s",
+                self.ai_name,
+                max(0, started - queued_at),
+                ai_seconds,
+                self.clock() - send_started,
+                outcome,
+            )
 
         except TelegramError as error:
             logger.warning(
@@ -2615,17 +3301,42 @@ class CommunityBot:
             )
 
         finally:
+            await self.stop_typing(
+                chat_id,
+                typing,
+            )
+
+            if outcome != "jawaban":
+                logger.info(
+                    "Balasan %s: total=%.1fs hasil=%s",
+                    self.ai_name,
+                    self.clock() - queued_at,
+                    outcome,
+                )
+
             queued = (
-                self.queued_replies.get(chat_id, 1) - 1
+                self.queued_replies.get(
+                    chat_id,
+                    1,
+                ) - 1
             )
 
             if queued:
                 self.queued_replies[chat_id] = queued
             else:
-                self.queued_replies.pop(chat_id, None)
+                self.queued_replies.pop(
+                    chat_id,
+                    None,
+                )
 
     async def deliver_chat_reply(
-        self, message, context, kind, response, history, priority
+        self,
+        message,
+        context,
+        kind,
+        response,
+        history,
+        priority,
     ):
         try:
             if not self.chatter_overrides.get(
@@ -2638,8 +3349,11 @@ class CommunityBot:
                 await self.send_group_text(
                     message,
                     response,
-                    reply_markup=self.private_button(context.bot),
+                    reply_markup=self.private_button(
+                        context.bot
+                    ),
                 )
+
                 await self.send_group_text(
                     message,
                     self.settings.backup_url,
@@ -2653,6 +3367,7 @@ class CommunityBot:
                 if response is None:
                     if not priority:
                         return
+
                     response = (
                         "Gue belum bisa jawab pasti sekarang, le. "
                         "Bisa jelasin detail pertanyaannya?"
@@ -2681,33 +3396,56 @@ class CommunityBot:
 
         finally:
             queued = (
-                self.queued_replies.get(message.chat.id, 1) - 1
+                self.queued_replies.get(
+                    message.chat.id,
+                    1,
+                ) - 1
             )
 
             if queued:
-                self.queued_replies[message.chat.id] = queued
+                self.queued_replies[
+                    message.chat.id
+                ] = queued
             else:
-                self.queued_replies.pop(message.chat.id, None)
+                self.queued_replies.pop(
+                    message.chat.id,
+                    None,
+                )
 
             if kind == "ai":
                 pending = (
-                    self.ai_pending.get(message.chat.id, 1) - 1
+                    self.ai_pending.get(
+                        message.chat.id,
+                        1,
+                    ) - 1
                 )
+
                 if pending:
-                    self.ai_pending[message.chat.id] = pending
+                    self.ai_pending[
+                        message.chat.id
+                    ] = pending
                 else:
-                    self.ai_pending.pop(message.chat.id, None)
+                    self.ai_pending.pop(
+                        message.chat.id,
+                        None,
+                    )
 
     async def control(self, update, context):
         message = update.effective_message
 
-        if message.chat.type not in ("group", "supergroup"):
+        if message.chat.type not in (
+            "group",
+            "supergroup",
+        ):
             await message.reply_text(
                 "Gunakan perintah ini di grup sebagai admin."
             )
             return
 
-        if await self.admin_status(message, context) is not True:
+        if await self.admin_status(
+            message,
+            context,
+        ) is not True:
             await message.reply_text(
                 "Pengaturan ini khusus admin grup, le."
             )
@@ -2717,12 +3455,16 @@ class CommunityBot:
             context.args
             and context.args[0].lower() in ("on", "off")
         ):
-            self.chatter_overrides[message.chat.id] = (
-                context.args[0].lower() == "on"
-            )
+            self.chatter_overrides[
+                message.chat.id
+            ] = context.args[0].lower() == "on"
 
-            if not self.chatter_overrides[message.chat.id]:
-                self.cancel_unanswered(message.chat.id)
+            if not self.chatter_overrides[
+                message.chat.id
+            ]:
+                self.cancel_unanswered(
+                    message.chat.id
+                )
 
         enabled = self.chatter_overrides.get(
             message.chat.id,
@@ -2746,22 +3488,25 @@ def health_handler():
             body = json.dumps({
                 "status": (
                     "running"
-                    if self.path == "/health" else
-                    "not_found"
+                    if self.path == "/health"
+                    else "not_found"
                 )
             }).encode()
 
             self.send_response(
                 200 if self.path == "/health" else 404
             )
+
             self.send_header(
                 "Content-Type",
                 "application/json",
             )
+
             self.send_header(
                 "Content-Length",
                 str(len(body)),
             )
+
             self.end_headers()
             self.wfile.write(body)
 
@@ -2778,14 +3523,30 @@ def main():
     logging.getLogger("httpcore").setLevel(logging.WARNING)
     logging.getLogger("telegram").setLevel(logging.CRITICAL)
 
-    token = os.environ.get("MCM_BOT_TOKEN", "").strip()
+    token = os.environ.get(
+        "MCM_BOT_TOKEN",
+        "",
+    ).strip()
 
     if not token:
         raise SystemExit(
             "MCM_BOT_TOKEN belum diisi di Variables Railway."
         )
 
-    controller = CommunityBot(Settings.from_env())
+    if __package__:
+        from .chat_pribadi import pasang_chat_pribadi
+    else:
+        from chat_pribadi import pasang_chat_pribadi
+
+    active_bot = type(
+        "BotDenganChatPribadi",
+        (CommunityBot,),
+        {},
+    )
+
+    pasang_chat_pribadi(active_bot)
+    controller = active_bot(Settings.from_env())
+
     server = None
 
     async def post_init(application):
@@ -2805,11 +3566,20 @@ def main():
         ).start()
 
         logger.info(
-            "MCM INDUK v12 aktif. Mode: %s. Welcome: %s. AI: %s (%s).",
+            "MCM INDUK v13 aktif. Mode: %s. "
+            "Welcome: %s. AI: %s (%s).",
             controller.settings.chat_mode,
-            "on" if controller.settings.welcome_enabled else "off",
+            (
+                "on"
+                if controller.settings.welcome_enabled
+                else "off"
+            ),
             controller.ai_name,
-            "dikonfigurasi" if controller.ai is not None else "belum diatur",
+            (
+                "dikonfigurasi"
+                if controller.ai is not None
+                else "belum diatur"
+            ),
         )
 
     async def post_stop(application):
@@ -2859,19 +3629,38 @@ def main():
     )
 
     app.add_handler(
-        CommandHandler(["start", "star"], controller.start)
+        CommandHandler(
+            ["start", "star"],
+            controller.start,
+        )
     )
+
     app.add_handler(
-        CommandHandler("nimbrung", controller.control)
+        CommandHandler(
+            "nimbrung",
+            controller.control,
+        )
     )
+
     app.add_handler(
-        CommandHandler("id", controller.show_id)
+        CommandHandler(
+            "id",
+            controller.show_id,
+        )
     )
+
     app.add_handler(
-        CommandHandler("hapuswelcome", controller.remove_welcome)
+        CommandHandler(
+            "hapuswelcome",
+            controller.remove_welcome,
+        )
     )
+
     app.add_handler(
-        CommandHandler("tesai", controller.test_ai)
+        CommandHandler(
+            "tesai",
+            controller.test_ai,
+        )
     )
 
     app.add_handler(
@@ -2943,10 +3732,6 @@ def main():
         )
         raise SystemExit(1) from None
 
-
-from balas_cepat import pasang_balas_cepat
-
-pasang_balas_cepat(CommunityBot)
 
 if __name__ == "__main__":
     main()
