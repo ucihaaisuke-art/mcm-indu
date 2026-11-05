@@ -1,4 +1,4 @@
-"""Satu bot MCM: komunitas, chat pribadi, media, dan VIP."""
+"""MCM: moderasi, chat pribadi, video, VIP, dan teman Emak."""
 
 import asyncio
 import logging
@@ -21,10 +21,12 @@ if __package__:
     from .bot_mcm import CommunityBot, Settings, health_handler
     from .chat_pribadi import pasang_chat_pribadi
     from .vip_mcm import pasang_vip_mcm
+    from .teman_ngobrol import TemanNgobrol
 else:
     from bot_mcm import CommunityBot, Settings, health_handler
     from chat_pribadi import pasang_chat_pribadi
     from vip_mcm import pasang_vip_mcm
+    from teman_ngobrol import TemanNgobrol
 
 logger = logging.getLogger(__name__)
 
@@ -34,13 +36,11 @@ def main():
         level=logging.INFO,
         format="%(levelname)s %(message)s",
     )
-
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
     logging.getLogger("telegram").setLevel(logging.CRITICAL)
 
     token = os.environ.get("MCM_BOT_TOKEN", "").strip()
-
     if not token:
         raise SystemExit(
             "Isi MCM_BOT_TOKEN pada service MCM."
@@ -49,21 +49,20 @@ def main():
     os.environ.setdefault("MCM_AI_PROVIDER", "gemini")
 
     bot_class = type(
-        "BotMcmDanVip",
-        (CommunityBot,),
-        {},
+        "BotMcmDanVip", (CommunityBot,), {}
     )
-
     pasang_chat_pribadi(bot_class)
     pasang_vip_mcm(bot_class)
 
     controller = bot_class(Settings.from_env())
+    friends = TemanNgobrol(controller)
     server = None
 
     async def post_init(application):
         nonlocal server
 
         controller.vip.bot = application.bot
+        await friends.start(application)
 
         logger.info(
             "Akun Telegram yang dipakai: @%s (ID %s).",
@@ -78,7 +77,6 @@ def main():
             ),
             health_handler(),
         )
-
         threading.Thread(
             target=server.serve_forever,
             daemon=True,
@@ -90,9 +88,11 @@ def main():
         )
 
     async def post_stop(application):
+        await friends.stop()
         await controller.stop_guidance()
 
     async def post_shutdown(application):
+        await friends.stop()
         await controller.stop_guidance()
 
         if server is not None:
@@ -107,10 +107,10 @@ def main():
     async def error_handler(update, context):
         if isinstance(context.error, Conflict):
             logger.error(
-                "Polling Telegram konflik. Periksa apakah "
-                "token bot yang sama sedang dipakai "
-                "deployment/service lain atau webhook "
-                "masih aktif."
+                "Polling Telegram konflik. "
+                "Periksa apakah token bot yang sama "
+                "sedang dipakai deployment/service lain "
+                "atau webhook masih aktif."
             )
             return
 
@@ -118,6 +118,12 @@ def main():
             "Proses bot MCM gabungan tertunda: jenis=%s",
             type(context.error).__name__,
         )
+
+    async def teman_command(update, context):
+        await friends.command(update, context)
+
+    async def teman_observe(update, context):
+        await friends.observe(update, context)
 
     app = (
         Application.builder()
@@ -147,7 +153,9 @@ def main():
     )
 
     app.add_handler(
-        CommandHandler(["start", "star"], controller.start)
+        CommandHandler(
+            ["start", "star"], controller.start
+        )
     )
     app.add_handler(
         CommandHandler("vip", controller.vip_menu)
@@ -168,12 +176,14 @@ def main():
         CommandHandler("nimbrung", controller.control)
     )
     app.add_handler(
+        CommandHandler("teman", teman_command)
+    )
+    app.add_handler(
         CommandHandler("id", controller.show_id)
     )
     app.add_handler(
         CommandHandler(
-            "hapuswelcome",
-            controller.remove_welcome,
+            "hapuswelcome", controller.remove_welcome
         )
     )
     app.add_handler(
@@ -186,18 +196,15 @@ def main():
             controller.welcome,
         )
     )
-
     app.add_handler(
         ChatMemberHandler(
             controller.membership,
             ChatMemberHandler.CHAT_MEMBER,
         )
     )
-
     app.add_handler(
         ChatJoinRequestHandler(controller.vip_join)
     )
-
     app.add_handler(
         CallbackQueryHandler(
             controller.vip_callback,
@@ -227,7 +234,6 @@ def main():
             controller.private_media,
         )
     )
-
     app.add_handler(
         MessageHandler(
             filters.ChatType.PRIVATE
@@ -237,6 +243,12 @@ def main():
         )
     )
 
+    app.add_handler(
+        MessageHandler(
+            filters.ChatType.GROUPS,
+            teman_observe,
+        )
+    )
     app.add_handler(
         MessageHandler(
             filters.ChatType.GROUPS,
@@ -257,7 +269,6 @@ def main():
                 "chat_join_request",
             ]
         )
-
     except TelegramError as error:
         logger.error(
             "Bot MCM gabungan belum tersambung: jenis=%s",
