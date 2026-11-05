@@ -1315,5 +1315,502 @@ class TemanNgobrol:
                 "AI dialog teman tertunda: jenis=%s",
                 type(error).__name__,
             )
+# TAMBAHAN KOSAKATA LOKAL
+# Tempel di bagian paling bawah teman_ngobrol.py.
 
+EXTRA_FACTS = (
+    (
+        r"\b(umur|usia)\b.*\b(bumi|earth)\b",
+        (
+            "Usia Bumi diperkirakan sekitar 4,54 miliar tahun, le. Angka ini didukung penanggalan radiometrik batuan dan meteorit.",
+        ),
+    ),
+    (
+        r"\b(kenapa|kok|mengapa)\b.*\b(laut|air laut)\b.*\basin\b",
+        (
+            "Air laut asin karena mengandung garam terlarut. Sebagian mineral terbawa dari pelapukan batuan lewat sungai; air menguap, garamnya banyak yang tertinggal, le.",
+        ),
+    ),
+    (
+        r"\b(pelangi|rainbow)\b",
+        (
+            "Pelangi muncul karena cahaya Matahari dibiaskan, dipantulkan di dalam tetes air, lalu terurai jadi berbagai warna, le.",
+        ),
+    ),
+    (
+        r"\b(pasang surut|air pasang)\b",
+        (
+            "Pasang surut laut terutama dipengaruhi gravitasi Bulan, juga Matahari, serta bentuk pantai dan kondisi setempat, le.",
+        ),
+    ),
+    (
+        r"\b(kenapa|kok|mengapa)\b.*\b(petir|kilat)\b",
+        (
+            "Kilat kelihatan duluan karena cahaya jauh lebih cepat daripada suara, le. Jadi bunyi gunturnya baru nyusul.",
+        ),
+    ),
+    (
+        r"\b(kecepatan cahaya|cahaya matahari sampai)\b",
+        (
+            "Di ruang hampa, cahaya melaju sekitar 300 ribu km per detik. Cahaya Matahari butuh sekitar 8 menit 20 detik buat sampai ke Bumi, le.",
+        ),
+    ),
+    (
+        r"\b(lubang hitam|black hole)\b",
+        (
+            "Lubang hitam punya wilayah dengan gravitasi begitu kuat sampai cahaya ga bisa keluar dari dalam batasnya. Tapi bukan penyedot yang otomatis menarik semua isi alam semesta, le.",
+        ),
+    ),
+    (
+        r"\b(fotosintesis|tumbuhan.*makanan)\b",
+        (
+            "Lewat fotosintesis, tumbuhan memakai energi cahaya untuk mengolah air dan karbon dioksida jadi gula. Proses ini juga menghasilkan oksigen, le.",
+        ),
+    ),
+    (
+        r"\b(kenapa|kok|mengapa)\b.*\b(cabai|cabe|pedas)\b",
+        (
+            "Capsaicin pada cabai mengaktifkan reseptor yang juga peka terhadap panas. Makanya mulut terasa panas meskipun makanannya belum tentu bersuhu tinggi, le.",
+        ),
+    ),
+    (
+        r"\b(apa itu|bedanya|beda|jelasin|jelaskan)\b.*\b(ram|ssd|cpu)\b",
+        (
+            "CPU mengolah instruksi, RAM jadi ruang kerja sementara, SSD menyimpan data. Ibarat dapur: CPU kokinya, RAM meja kerja, SSD lemari bahan, le.",
+        ),
+    ),
+    (
+        r"\b(wifi|wi fi)\b.*\b(internet|apa|beda)\b",
+        (
+            "WiFi itu cara perangkat terhubung ke jaringan tanpa kabel. Internet itu jaringan yang lebih luas; tersambung WiFi belum tentu sambungan internetnya jalan, le.",
+        ),
+    ),
+    (
+        r"\b(apa itu|jelasin|jelaskan)\b.*\bvpn\b",
+        (
+            "VPN membuat terowongan koneksi terenkripsi ke server VPN. Bisa membantu privasi jaringan, tapi bukan jaminan anonim total atau pengganti kebiasaan aman, le.",
+        ),
+    ),
+    (
+        r"\b(otp|kode verifikasi)\b",
+        (
+            "OTP itu kode sekali pakai untuk verifikasi. Jangan bagikan kode masuk akun ke orang lain, termasuk yang mengaku admin, le.",
+        ),
+    ),
+    (
+        r"\b(chatgpt|gemini)\b.*\b(beda|bagus|apa|pinter)\b|\b(beda|bagus)\b.*\b(chatgpt|gemini)\b",
+        (
+            "Keduanya punya model AI dengan kemampuan dan batas yang berbeda. Pilih berdasarkan tugas, biaya, serta kuota yang tersedia; ga ada jawaban paling bagus buat semua kebutuhan, le.",
+        ),
+    ),
+    (
+        r"\bghosting\b",
+        (
+            "Ghosting itu mendadak memutus komunikasi tanpa penjelasan. Bisa bikin bingung; lu boleh cari kejelasan sekali, tapi jangan sampai harga diri ikut jadi mode pesawat, le.",
+        ),
+    ),
+    (
+        r"\b(red flag|green flag)\b",
+        (
+            "Red flag itu tanda perilaku yang perlu diwaspadai, green flag tanda yang sehat. Nilai dari pola tindakannya, bukan cuma caption manis, le.",
+        ),
+    ),
+    (
+        r"\bfomo\b",
+        (
+            "FOMO itu rasa takut ketinggalan pengalaman atau tren. Ga semua yang rame harus lu ikutin, le. Dompet juga punya hak istirahat.",
+        ),
+    ),
+    (
+        r"\boverthinking\b",
+        (
+            "Overthinking biasanya berarti mikirin sesuatu berulang sampai susah mengambil langkah. Coba pisahkan fakta dan dugaan, lalu pilih satu hal kecil yang bisa dilakukan, le.",
+        ),
+    ),
+    (
+        r"\b(salting|baper|crush)\b",
+        (
+            "Salting itu salah tingkah, baper berarti terbawa perasaan, crush biasanya orang yang lagi ditaksir. Kamusnya singkat, dramanya bisa satu musim, le 😂",
+        ),
+    ),
+    (
+        r"\b(tips|cara|gimana)\b.*\b(nabung|hemat)\b",
+        (
+            "Coba sisihkan tabungan begitu ada pemasukan, pisahkan kebutuhan dan keinginan, lalu catat pengeluaran. Mulai kecil juga gapapa, le; yang penting rutin.",
+        ),
+    ),
+    (
+        r"\b(tips|cara|gimana)\b.*\b(belajar|fokus)\b",
+        (
+            "Pecah tugas jadi bagian kecil, singkirkan gangguan, belajar sebentar lalu istirahat. Coba jelasin ulang pakai bahasa sendiri biar ketahuan bagian yang belum nyantol, le.",
+        ),
+    ),
+    (
+        r"\b(gombal|gombalin|rayu|rizz)\b",
+        (
+            "Lu kayak tombol simpan: baru nongol dikit, langsung pengen gue bookmark. Wkwk, receh ya le 😂",
+            "Lu ga harus jadi notifikasi, tapi tiap muncul tetep bikin nengok, le 😂",
+            "Sinyal boleh satu bar, semoga komunikasi jangan setengah sadar, le 😂",
+        ),
+    ),
+    (
+        r"\b(jokes|lawak|lucu|candaan|receh)\b",
+        (
+            "Kenapa kulkas ga pernah ikut debat? Takut suasananya jadi panas 😂",
+            "Yang paling jago bikin orang menunggu itu bukan mantan, le. Tulisan sebentar lagi di layar update 😂",
+            "Gue bukan malas, le. Kadang energinya lagi mode hemat baterai. Wkwk 😂",
+        ),
+    ),
+    (
+        r"\bselebgram\b",
+        (
+            "Selebgram itu orang yang dikenal lewat aktivitas atau kontennya di Instagram. Kalau mau bahas orang tertentu, sebut namanya; yang gue bahas info publik, bukan gosip pribadi, le.",
+        ),
+    ),
+    (
+        r"\byua mikami\b",
+        (
+            "Yua Mikami adalah figur publik Jepang yang dikenal lewat karier hiburan, termasuk industri hiburan dewasa. Gue cuma bahas profil publik yang non-eksplisit, le.",
+        ),
+    ),
+    (
+        r"\b(sora aoi|sola aoi)\b",
+        (
+            "Sora Aoi adalah figur publik Jepang yang dikenal sebagai aktris dan lewat karier di industri hiburan dewasa. Buat kabar terbarunya, cek sumber resmi; stok gue bukan berita langsung, le.",
+        ),
+    ),
+    (
+        r"\bjav\b",
+        (
+            "JAV singkatan dari Japanese Adult Video, istilah untuk media dewasa Jepang. Kalau nanya istilah atau profil publik, bisa dibahas secara non-eksplisit, le.",
+        ),
+    ),
+    (
+        r"\braffi ahmad\b",
+        (
+            "Raffi Ahmad dikenal sebagai presenter, aktor, dan pengusaha Indonesia. Kalau soal kabar pribadi terbaru, gue ga punya verifikasi langsung, le.",
+        ),
+    ),
+    (
+        r"\bmaudy ayunda\b",
+        (
+            "Maudy Ayunda dikenal sebagai penyanyi dan aktris Indonesia, juga lewat perhatian publik pada pendidikannya. Gue ga punya update kegiatan hariannya, le.",
+        ),
+    ),
+    (
+        r"\b(agnez mo|agnes monica)\b",
+        (
+            "Agnez Mo adalah penyanyi dan aktris Indonesia yang juga berkarier secara internasional, le. Untuk jadwal dan rilisan terbaru, cek kanal resminya.",
+        ),
+    ),
+    (
+        r"\brich brian\b",
+        (
+            "Rich Brian adalah rapper asal Indonesia yang dikenal secara internasional. Info jadwal dan karya terbarunya perlu dicek dari kanal resmi, le.",
+        ),
+    ),
+    (
+        r"\biko uwais\b",
+        (
+            "Iko Uwais adalah aktor dan praktisi seni bela diri Indonesia, dikenal antara lain lewat film The Raid, le.",
+        ),
+    ),
+)
+
+
+def pasang_kosakata_lokal():
+    global LOCAL_REPLIES, LOCAL_DIALOGS
+
+    if getattr(TemanNgobrol, "_kosakata_v2", False):
+        return
+
+    extra = (
+        (
+            "Gas, le. Jelasin dulu, kita urai pelan-pelan.",
+            "Spill bagian yang bikin bingung, le.",
+            "Valid buat ditanyain. Mulai dari konteksnya dulu ya.",
+            "Oke, gue simak. Jangan buru-buru nebak dulu.",
+            "Bisa kita bahas, le. Pertanyaannya yang mana?",
+            "Sini ceritain, ga perlu bahasa formal kok.",
+            "Santai, le. Kita mulai dari yang paling sederhana.",
+            "Hadir. Mau hitung-hitungan, soal grup, atau obrolan receh?",
+        ),
+        (
+            "Gas bang, gue nyaut. Jangan langsung dikasih soal ujian ya 😂",
+            "Spill, le. Gue simak sambil nahan komentar receh.",
+            "Hadir, sinyal aman, kelakuan masih perlu pengawasan 😂",
+            "Wkwk, gue di sini. Ada misi apa nih?",
+            "Boleh, le. Mau curhat apa ngajak debat bubur diaduk?",
+            "Nyaut dulu. Jangan bilang gue cuma pajangan grup 😂",
+            "Siap bang. Serius boleh, receh juga gue tampung.",
+            "Ada apa le? Biar ga nebak-nebak kayak nyari sandal ketuker 😂",
+        ),
+        (
+            "Gas, le. Emak simak dulu.",
+            "Spill ceritanya. Jangan cuma manggil terus menghilang 😂",
+            "Ada apa nih, rame amat manggil Emak 😄",
+        ),
+    )
+
+    LOCAL_REPLIES = tuple(
+        old + addition
+        for old, addition in zip(LOCAL_REPLIES, extra)
+    )
+
+    LOCAL_DIALOGS += (
+        (
+            "Den, ada orang bilang dia low profile.",
+            "Kalau gue low battery, Dit. Baru mulai hari udah nyari colokan 😂",
+            "Yang penting kalau janji jangan low responsibility, le.",
+        ),
+        (
+            "Katanya komunikasi itu kunci hubungan yang sehat.",
+            "Pantes gue sering mentok. Gue malah sibuk nyari kunci motor 😂",
+            "Dengerin orang sampai selesai juga bagian komunikasi, le.",
+        ),
+        (
+            "Kadang kita cuma perlu istirahat sebentar, bukan menyerah.",
+            "Gue setuju, Dit. Tapi tombol snooze gue jangan ikut rapat, nanti votingnya tidur lagi 😂",
+            "Istirahat boleh. Habis itu satu-satu tugasnya dikerjain, le.",
+        ),
+        (
+            "Kalau semua masalah dibawa ke hati, capek juga ya.",
+            "Makanya gue bawa ke catatan dulu, Dit. Biar ga lupa masalah yang mana 😂",
+            "Bikin langkah kecil yang bisa lu kerjain. Sisanya jangan dipikirin sekaligus, le.",
+        ),
+    )
+
+    original_answer = TemanNgobrol.local_answer
+
+    def expanded_answer(self, index, text):
+        lower = re.sub(
+            r"\s+", " ", text.casefold()
+        ).strip()
+
+        short = {
+            "gmn": "gimana",
+            "knp": "kenapa",
+            "dmn": "dimana",
+            "dmna": "dimana",
+            "brp": "berapa",
+            "kpn": "kapan",
+        }
+
+        lower = re.sub(
+            r"\b(?:gmn|knp|dmn|dmna|brp|kpn)\b",
+            lambda match: short[match.group()],
+            lower,
+        )
+
+        if re.search(
+            r"\b(?:bisa|bsa|bantu|ngerti|tahu|tau)\b.*"
+            r"\b(?:apa|apaan|apaaja)\b|"
+            r"\b(?:apa aja|apaan aja)\b.*\bbisa\b",
+            lower,
+        ):
+            options = (
+                (
+                    "Gue bisa bantu soal grup, VIP, hitung-hitungan, pengetahuan umum, sama ngobrol receh, le. Kalau belum tahu, gue bilang terus terang.",
+                    "Dari petunjuk grup sampai sains ringan dan soal sehari-hari bisa kita bahas, le. Gue jawab pakai stok lokal yang ada, bukan asal nebak.",
+                ),
+                (
+                    "Gue bagian nyaut, ngobrol receh, bantu soal grup, sama jawab hal umum yang ada di stok gue, le. Ngitung juga bisa, asal bukan ngitung utang gue 😂",
+                    "Soal grup, VIP, hitungan sederhana, dan obrolan sehari-hari gue bantu, le. Kalau belum tahu, gue jujur. Sok tahu bikin malu satu grup 😂",
+                ),
+                (
+                    "Emak bantu petunjuk grup, VIP, video terdaftar, dan obrolan, le. Pertanyaan AI panggil pakai mak, kalau tersedia nanti diproses di jalurnya.",
+                ),
+            )
+            return self.pick_local(
+                index, options[index]
+            )
+
+        if re.search(
+            r"\b(?:tau|tahu|ngerti)\s+(?:semua|semuanya)\b",
+            lower,
+        ):
+            return self.pick_local(index, (
+                "Banyak hal umum bisa kita bahas, le, tapi ga ada jaminan gue tahu semuanya. Yang belum pasti ga bakal gue karang.",
+                "Stok gue lumayan buat ngobrol, le. Kalau belum ada jawabannya, gue bilang belum tahu daripada nyebar info ngawur.",
+            ))
+
+        seeking = (
+            r"\b(?:mana|dimana|kemana|cariin|cari|panggil)\b"
+        )
+        person = (
+            r"(?:adit+|dit+|den{1,2}is+|nis+)"
+        )
+
+        location = re.search(
+            seeking
+            + r"\s+(?:si\s+)?("
+            + person
+            + r")\b",
+            lower,
+        )
+
+        before = re.search(
+            r"\b("
+            + person
+            + r")\s+(?:lagi\s+)?"
+            + seeking,
+            lower,
+        )
+
+        if before:
+            remaining = re.sub(
+                r"\b(?:sekarang|nih|ya|lu|lo|kamu|"
+                r"adit+|dit+|den{1,2}is+|nis+)\b|[\s,.?!]",
+                "",
+                lower[before.end():],
+            )
+            if not remaining:
+                location = before
+
+        if location:
+            wanted = (
+                0
+                if re.fullmatch(
+                    r"adit+|dit+", location.group(1)
+                )
+                else 1
+            )
+
+            if index == wanted:
+                return self.pick_local(index, (
+                    "Gue di sini, le. Mau nanya apa?",
+                    "Hadir, le. Langsung aja ceritain.",
+                    "Nyaut nih, le. Gue masih di chat ini 😄",
+                ))
+
+            name, call = (
+                ("Adit", "dit")
+                if wanted == 0
+                else ("Denis", "nis")
+            )
+
+            return self.pick_local(index, (
+                f"{name} bisa dipanggil pakai {call} di sini, le. Coba panggil aja 😄",
+                f"Cari {name}? Tulis {call} di chat ini biar dia nyaut, le.",
+            ))
+
+        if re.search(
+            r"\b(?:siapa|nama)\s+(?:lu|lo|kamu|elu)|"
+            r"\blu siapa\b|"
+            r"\b(?:lu|kamu|lo)\b.*\b(?:bot|manusia|ai)\b",
+            lower,
+        ):
+            return (
+                "Gue "
+                + NAMES[index]
+                + ", karakter bot temen ngobrol di grup ini, le. "
+                "Bukan akun resmi tokoh animasinya."
+            )
+
+        if re.search(
+            r"\b(?:umur|usia|tinggal|rumah|pacar)\b.*"
+            r"\b(?:lu|lo|kamu|adit|denis|dennis)\b",
+            lower,
+        ):
+            return self.pick_local(index, (
+                "Gue karakter bot di chat ini, le, jadi ga punya umur manusia, rumah pribadi, atau hubungan pacaran beneran.",
+                "Di sini gue nemenin ngobrol sebagai bot, le. Kalau cerita hidup tokohnya, kita bisa bikin cerita fiksi yang jelas-jelas karangan 😄",
+            ))
+
+        if re.search(
+            r"\b(?:siapa|bedanya|beda)\b.*"
+            r"\b(?:adit|denis|dennis)\b",
+            lower,
+        ):
+            return (
+                "Adit versi bot ini lebih suka bantu jelasin, "
+                "Denis lebih banyak bercanda. Dua-duanya temen "
+                "ngobrol grup, bukan akun resmi serialnya, le."
+            )
+
+        if re.search(
+            r"\b(?:harga|berapa|biaya)\b.*"
+            r"\b(?:vip|grup|paket|indo|ai hd|take all)\b|"
+            r"\b(?:vip|paket)\b.*\b(?:harga|berapa|biaya)\b",
+            lower,
+        ):
+            try:
+                if __package__:
+                    from .vip_mcm import PLANS
+                else:
+                    from vip_mcm import PLANS
+
+                prices = "; ".join(
+                    f"{plan.name}: Rp{plan.amount:,}".replace(
+                        ",", "."
+                    )
+                    for plan in PLANS.values()
+                )
+
+                return (
+                    prices[:270]
+                    + ". Order lewat chat pribadi Emak, "
+                    "ketik /vip ya, le."
+                )
+
+            except ImportError:
+                return (
+                    "Harga dan pilihan terbaru ada di chat "
+                    "pribadi Emak, le. Ketik /vip buat buka menunya."
+                )
+
+        group_answers = (
+            (
+                r"\b(?:siapa|mana)\b.*\b(?:admin|owner|pemilik)\b",
+                "Admin manusianya bisa dilihat di daftar anggota bagian administrator, le. Emak itu bot yang bantu layanan; pembayaran tetap diperiksa owner.",
+            ),
+            (
+                r"\b(?:aturan|peraturan|boleh apa)\b.*\bgrup\b|\baturan disini\b",
+                "Jaga obrolan, jangan spam, dan ikuti arahan admin, le. Tautan atau forward sembarangan bisa dihapus. Pesan tersemat juga perlu dibaca.",
+            ),
+            (
+                r"\b(?:ga bisa|gak bisa|gabisa|tidak bisa|kenapa)\b.*\b(?:save|simpan|forward|teruskan)\b",
+                "Admin memasang pembatasan simpan/forward di grup, le. Untuk video yang sudah terdaftar lewat bot, minta lewat chat pribadi Emak dengan link pesan grupnya.",
+            ),
+            (
+                r"\b(?:sudah|udah|uda)\b.*\b(?:bayar|transfer)\b|\bbukti transfer\b",
+                "Kirim bukti sesuai petunjuk pesanan di chat pribadi Emak, sertakan Nama pengirim. Tunggu owner cek uang masuk; jangan bayar ulang hanya karena link belum muncul, le.",
+            ),
+            (
+                r"\b(?:done|lunas|konfirmasi pembayaran)\b",
+                "Status lunas ditetapkan setelah owner memeriksa uang masuk dan membalas pesan pemeriksaan dengan done, le. Tulisan done dari member ga otomatis membuka akses.",
+            ),
+            (
+                r"\b(?:link|akses)\b.*\b(?:hilang|ilang|kadaluarsa|kedaluwarsa|expired|ulang)\b",
+                "Kalau pembeliannya sudah lunas, coba /akses di chat pribadi Emak memakai akun pembeli yang sama, le. Kalau belum berhasil, hubungi owner.",
+            ),
+            (
+                r"\b(?:jam berapa|kapan)\b.*\b(?:upload|unggah|video|update)\b",
+                "Gue ga pegang jadwal unggahan admin, le. Pantau grup; kalau ada jadwal resmi biasanya admin yang mengumumkan.",
+            ),
+            (
+                r"\b(?:mode lokal|offline|kuota|api key|gemini lagi error|gemini ga bisa)\b",
+                "Panggilan Adit dan Denis dijawab dari stok lokal, jadi ga memakai kuota Gemini. Telegram tetap butuh internet. Stok lokal juga ga otomatis tahu berita atau jawaban baru, le.",
+            ),
+        )
+
+        for pattern, answer in group_answers:
+            if re.search(pattern, lower):
+                return answer
+
+        for pattern, answers in EXTRA_FACTS:
+            if re.search(pattern, lower):
+                return self.pick_local(
+                    index, answers
+                )
+
+        return original_answer(
+            self, index, lower
+        )
+
+    TemanNgobrol.local_answer = expanded_answer
+    TemanNgobrol._kosakata_v2 = True
+
+
+pasang_kosakata_lokal()
         return None
