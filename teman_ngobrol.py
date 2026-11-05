@@ -1,6 +1,7 @@
-"""Pengatur dialog Adit, Dennis, Emak, dan balasan BT."""
+"""Adit dan Dennis: satu pengatur, tanpa polling tambahan."""
 
 import asyncio
+import json
 import logging
 import os
 import random
@@ -42,6 +43,13 @@ ACTORS = (
     ("Dennis", "denisjarwo_bot", "MCM_BAPER_BOT_TOKEN"),
 )
 
+NAMES = ("Adit", "Dennis", "Emak")
+
+ALIASES = (
+    re.compile(r"\b(?:adit+|dit+)\b", re.I),
+    re.compile(r"\b(?:den{1,2}is+|nis+)\b", re.I),
+)
+
 TOPICS = (
     "planet, bintang dan perjalanan ke Mars",
     "laut dalam dan makhluk unik",
@@ -74,14 +82,30 @@ TOPICS = (
     "kebun, tanaman dan lingkungan",
     "pertanyaan andaikan yang lucu dan masuk akal",
     "politik sehari-hari dan layanan publik, tanpa kampanye atau ajakan memilih",
+    "andaikan alien ikut rapat RT dan harus bayar iuran",
+    "andaikan kucing jadi satpam kompleks",
+    "andaikan kulkas bisa mengadu soal penghuni rumah",
+    "kenapa ide bagus sering muncul saat mandi",
+    "kejadian salah kirim chat yang sepenuhnya fiktif",
+    "benda sehari-hari yang desainnya bikin heran",
+    "andaikan dinosaurus hidup di kota sekarang",
+    "mitos sehari-hari dan penjelasan sainsnya",
+    "andaikan robot harus menawar harga di pasar",
+    "rencana absurd membuka warung di bulan",
+    "kenapa antrean sebelah selalu terasa lebih cepat",
+    "teka-teki logika ringan dan salah tebak yang lucu",
 )
 
 RULES = (
-    "Kamu memainkan SATU karakter bot hiburan di grup Telegram. "
-    "Adit ceria, punya ide dan suka menenangkan Dennis. Dennis mudah khawatir, "
-    "kadang salah paham tetapi tidak bodoh. Emak ceplas-ceplos dan hangat. "
+    "Kamu menulis obrolan karakter bot hiburan di grup Telegram. "
+    "Adit paling pintar: cepat menangkap maksud, pengetahuan luas, bisa menjelaskan "
+    "hal sulit dengan contoh sederhana, tetap santai dan tidak sok tahu. "
+    "Dennis paling kocak: spontan, suka bercanda dan salah paham lucu, "
+    "tetapi tetap menjawab inti pertanyaan dengan informasi yang benar. "
+    "Dennis tidak perlu selalu takut; untuk masalah serius tetap peka. "
+    "Emak ceplas-ceplos dan hangat. "
     "Terinspirasi dinamika Adit dan Dennis, buat dialog BARU, bukan kutipan episode. "
-    "Tulis hanya ucapan karakter yang ditunjuk, tanpa label nama, tanpa dialog tokoh lain. "
+    "Ikuti karakter dan format keluaran yang ditentukan pengatur untuk permintaan ini. "
     "Gunakan bahasa percakapan, 1–2 kalimat, maksimal 300 karakter. "
     "Gaya chat grup santai: boleh gue/lu, ga, kok, wkwk secara wajar. "
     "Variasikan panjang dan susunan kalimat, jangan setiap pesan memakai emoji atau sapaan. "
@@ -119,19 +143,49 @@ class TemanNgobrol:
         self.bots = []
         self.ready = False
         self.task = None
+
         self.wake = asyncio.Event()
         self.lock = asyncio.Lock()
+
         self.history = deque(maxlen=8)
+        self.prepared = deque()
+
         self.last_activity = self.clock()
         self.next_session = self.clock() + 2700
         self.active = False
         self.started_at = self.clock()
         self.turn = 0
+
+        try:
+            self.max_turns = max(
+                4,
+                min(
+                    24,
+                    int(os.environ.get("MCM_TEMAN_PESAN", "12")),
+                ),
+            )
+            self.gap_seconds = max(
+                20,
+                min(
+                    180,
+                    int(os.environ.get("MCM_TEMAN_JEDA", "45")),
+                ),
+            )
+        except ValueError:
+            self.max_turns = 12
+            self.gap_seconds = 45
+            logger.warning(
+                "Pengaturan durasi teman tidak valid; "
+                "memakai 12 pesan dan jeda 45 detik."
+            )
+
+        self.next_turn_at = 0
         self.member_replies = 0
         self.pending = None
         self.seen = set()
         self.last_bt = {}
         self.revision = 0
+
         self.topic = None
         self.recent_topics = deque(maxlen=8)
         self.forced = False
@@ -149,6 +203,7 @@ class TemanNgobrol:
             for item, token in zip(ACTORS, self.tokens)
             if not token
         ]
+
         if missing:
             return (
                 "BELUM SIAP: isi "
@@ -228,6 +283,7 @@ class TemanNgobrol:
                     pool_timeout=10,
                     connection_pool_size=8,
                 )
+
                 bot = Bot(
                     token=token,
                     request=request,
@@ -307,6 +363,7 @@ class TemanNgobrol:
                 )
                 and not isinstance(error, BadRequest)
             )
+
             retry = 30 if transient else 300
             self.retry_at = self.clock() + retry
 
@@ -359,6 +416,7 @@ class TemanNgobrol:
         self.forced = False
         self.next_session = self.clock() + 3600
         self.revision += 1
+        self.prepared.clear()
 
     async def command(self, update, context):
         if (
@@ -397,7 +455,9 @@ class TemanNgobrol:
             f"Teman Emak: {self.status()}\n"
             "/teman on, /teman off, /teman tes.\n"
             "Normalnya mulai setelah grup sepi 45 menit; "
-            "maksimal satu sesi per jam.",
+            f"sampai {self.max_turns} pesan, "
+            f"jeda sekitar {self.gap_seconds} detik. "
+            "Pertanyaan member diprioritaskan.",
             parse_mode=None,
         )
 
@@ -425,6 +485,8 @@ class TemanNgobrol:
         self.seen.add(key)
         self.last_activity = self.clock()
         self.revision += 1
+        self.prepared.clear()
+
         text = m.text or m.caption or ""
 
         if (
@@ -446,6 +508,7 @@ class TemanNgobrol:
 
         if re.search(r"\bbt\b", text, re.I):
             self.finish()
+
             previous = self.last_bt.get(
                 m.from_user.id, -10000
             )
@@ -487,6 +550,22 @@ class TemanNgobrol:
                 target = index
                 break
 
+        if target is None:
+            calls = [
+                (match.start(), index)
+                for index, pattern in enumerate(ALIASES)
+                if (match := pattern.search(text)) is not None
+            ]
+
+            if calls:
+                position, called_index = min(calls)
+
+                if (
+                    not addressed_question(m, context.bot)
+                    or not text[:position].strip()
+                ):
+                    target = called_index
+
         if target is None and addressed_question(
             m, context.bot
         ):
@@ -500,16 +579,28 @@ class TemanNgobrol:
 
         if self.member_replies >= 2 and self.active:
             self.finish()
+
             if target is None:
                 return
 
         if not self.active:
             self.begin()
-            self.turn = 4
+            self.turn = self.max_turns
+            self.history.extend(
+                list(
+                    self.controller.history.get(self.group, ())
+                )[-6:]
+            )
+
+        quote = m.reply_to_message
 
         self.history.append({
             "speaker": "member",
             "text": text[:500],
+            "reply_to": (
+                (quote.text or quote.caption or "")[:300]
+                if quote else ""
+            ),
         })
 
         self.pending = (
@@ -524,15 +615,18 @@ class TemanNgobrol:
         self.active = True
         self.started_at = self.clock()
         self.turn = 0
+        self.next_turn_at = self.clock()
         self.member_replies = 0
         self.pending = None
         self.history.clear()
+        self.prepared.clear()
 
         self.topic = random.choice([
             topic
             for topic in TOPICS
             if topic not in self.recent_topics
         ])
+
         self.recent_topics.append(self.topic)
 
     async def run(self):
@@ -580,7 +674,7 @@ class TemanNgobrol:
 
             now = self.clock()
 
-            if self.active and now - self.started_at > 180:
+            if self.active and now - self.started_at > 900:
                 self.finish()
                 return
 
@@ -596,11 +690,17 @@ class TemanNgobrol:
 
             c = self.controller
 
-            if (
-                c.queued_replies.get(self.group, 0)
-                or c.ai_pending.get(self.group, 0)
+            if not self.pending and (
+                any(c.queued_replies.values())
+                or any(c.ai_pending.values())
+                or getattr(c, "dm_pending", ())
             ):
-                self.finish()
+                return
+
+            if (
+                self.pending is None
+                and now < self.next_turn_at
+            ):
                 return
 
             pending = self.pending
@@ -611,67 +711,134 @@ class TemanNgobrol:
                 if pending
                 else (self.turn % 3, None)
             )
-            actor = ("Adit", "Dennis", "Emak")[index]
 
-            if c.ai.budget_delay() > 0:
-                return
+            actor = NAMES[index]
 
-            if not await c.ai.reserve_call(
-                False, self.allowed
-            ):
-                return
+            if not self.prepared or pending:
+                if c.ai.budget_delay() > 0:
+                    return
 
-            history = list(self.history) + [{
-                "speaker": "pengatur",
-                "text": (
-                    f"Giliran {actor}. Topik: {self.topic}. "
-                    + (
-                        "Tanggapi pesan member terakhir."
-                        if pending
-                        else "Lanjutkan dialog singkat."
-                    )
-                ),
-            }]
-
-            async with asyncio.timeout(
-                c.ai.request_timeout
-            ):
-                async with c.ai.semaphore:
-                    response = await c.ai.client.post(
-                        c.ai.endpoint(),
-                        json=c.ai.payload(
-                            history, RULES
-                        ),
+                if not pending:
+                    recent = sum(
+                        now - called < 60
+                        for called in c.ai.calls
                     )
 
-            if response.status_code != 200:
-                c.ai.backoff_until = c.clock() + 60
+                    if recent >= max(1, c.ai.rpm - 2):
+                        return
 
-                logger.warning(
-                    "AI dialog teman tertunda: HTTP %s",
-                    response.status_code,
+                if not await c.ai.reserve_call(
+                    False, self.allowed
+                ):
+                    return
+
+                if pending:
+                    order = [actor]
+                else:
+                    order = [
+                        NAMES[(self.turn + offset) % 3]
+                        for offset in range(
+                            min(
+                                3,
+                                self.max_turns - self.turn,
+                            )
+                        )
+                    ]
+
+                instruction = (
+                    f"Jawab sebagai {actor}, hanya ucapan "
+                    "karakter itu, tanpa label nama. "
+                    "Tanggapi member terakhir; kalau hanya "
+                    "memanggil, sambut lalu tanya butuh apa."
+                    if pending else
+                    "Buat tepat satu giliran untuk setiap "
+                    "nama di order. Keluaran hanya JSON array: "
+                    '[{"speaker":"Adit","text":"ucapan"}, ...]. '
+                    "Nama dan urutan harus persis order, "
+                    "tanpa Markdown."
                 )
 
+                history = list(self.history) + [{
+                    "speaker": "pengatur",
+                    "order": order,
+                    "text": (
+                        f"Topik pemantik: {self.topic}. "
+                        + instruction
+                    ),
+                }]
+
+                raw = await self.generate(
+                    history,
+                    RULES + " " + instruction,
+                    json_mode=not pending,
+                )
+
+                if raw is None:
+                    return
+
+                if (
+                    not self.allowed()
+                    or self.revision != revision
+                ):
+                    return
+
+                if pending:
+                    if not self.valid_text(raw):
+                        self.finish()
+                        return
+
+                    self.prepared.append((index, raw))
+
+                else:
+                    try:
+                        cleaned = re.sub(
+                            r"^```(?:json)?\s*|\s*```$",
+                            "",
+                            raw,
+                        )
+                        rows = json.loads(cleaned)
+
+                        if (
+                            not isinstance(rows, list)
+                            or len(rows) != len(order)
+                        ):
+                            raise ValueError(
+                                "Jumlah giliran tidak sesuai."
+                            )
+
+                        batch = []
+
+                        for offset, row in enumerate(rows):
+                            if (
+                                not isinstance(row, dict)
+                                or row.get("speaker") != order[offset]
+                                or not self.valid_text(
+                                    row.get("text")
+                                )
+                            ):
+                                raise ValueError(
+                                    "Format dialog tidak sesuai."
+                                )
+
+                            batch.append((
+                                (self.turn + offset) % 3,
+                                row["text"].strip(),
+                            ))
+
+                        self.prepared.extend(batch)
+
+                    except (ValueError, TypeError):
+                        logger.warning(
+                            "AI dialog teman belum menghasilkan "
+                            "format giliran yang sesuai."
+                        )
+                        self.finish()
+                        return
+
+            prepared_index, text = self.prepared.popleft()
+
+            if prepared_index != index:
                 self.finish()
-                return
-
-            text = c.ai.response_text(
-                response.json()
-            ).strip()
-
-            if (
-                not text
-                or LINK_PATTERN.search(text)
-                or "@" in text
-                or child_content_request(text)
-            ):
-                self.finish()
-                return
-
-            if (
-                not self.allowed()
-                or self.revision != revision
-            ):
                 return
 
             bot = (
@@ -681,7 +848,8 @@ class TemanNgobrol:
             )
 
             async with c.outgoing_locks.setdefault(
-                self.group, asyncio.Lock()
+                self.group,
+                asyncio.Lock(),
             ):
                 await c.wait_outgoing(self.group)
 
@@ -722,6 +890,14 @@ class TemanNgobrol:
 
             c.last_reply[self.group] = self.clock()
 
+            self.next_turn_at = (
+                self.clock()
+                + random.uniform(
+                    self.gap_seconds * 0.8,
+                    self.gap_seconds * 1.2,
+                )
+            )
+
             if pending:
                 self.member_replies += 1
                 self.pending = None
@@ -730,5 +906,111 @@ class TemanNgobrol:
 
             if (
                 pending and self.member_replies >= 2
-            ) or self.turn >= 4:
+            ) or self.turn >= self.max_turns:
                 self.finish()
+
+    @staticmethod
+    def valid_text(text):
+        return (
+            isinstance(text, str)
+            and 0 < len(text.strip()) <= 350
+            and not LINK_PATTERN.search(text)
+            and "@" not in text
+            and not child_content_request(text)
+        )
+
+    async def generate(
+        self,
+        history,
+        instructions,
+        *,
+        json_mode=False,
+    ):
+        ai = self.controller.ai
+
+        try:
+            payload = ai.payload(
+                history,
+                instructions,
+            )
+
+            if (
+                json_mode
+                and "generationConfig" in payload
+            ):
+                payload["generationConfig"][
+                    "responseMimeType"
+                ] = "application/json"
+
+            async with asyncio.timeout(
+                ai.request_timeout
+            ):
+                async with ai.semaphore:
+                    response = await ai.client.post(
+                        ai.endpoint(),
+                        json=payload,
+                    )
+
+            if response.status_code == 200:
+                text = ai.response_text(
+                    response.json()
+                ).strip()
+
+                ai.last_error = ""
+                return text
+
+            try:
+                retry = max(
+                    60,
+                    min(
+                        3600,
+                        float(
+                            response.headers.get(
+                                "retry-after", "60"
+                            )
+                        ),
+                    ),
+                )
+            except ValueError:
+                retry = 60
+
+            ai.backoff_until = self.clock() + retry
+
+            hint = (
+                "Kuota/batas proyek AI tercapai. "
+                "Periksa /tesai dan dashboard API."
+                if response.status_code == 429 else
+                "Periksa akses key dan model melalui /tesai."
+            )
+
+            ai.last_error = (
+                f"{ai.name} HTTP {response.status_code}. "
+                + hint
+            )
+            ai.last_failure = ai.last_error
+
+            logger.warning(
+                "AI dialog teman tertunda: HTTP %s",
+                response.status_code,
+            )
+
+        except (
+            httpx.HTTPError,
+            TimeoutError,
+            ValueError,
+        ) as error:
+            ai.backoff_until = self.clock() + 60
+
+            ai.last_error = (
+                f"Gangguan sambungan {ai.name} "
+                f"({type(error).__name__})."
+            )
+            ai.last_failure = ai.last_error
+
+            logger.warning(
+                "AI dialog teman tertunda: jenis=%s",
+                type(error).__name__,
+            )
+
+        self.finish()
+        return None
