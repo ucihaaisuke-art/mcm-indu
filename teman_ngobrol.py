@@ -9,8 +9,14 @@ from collections import deque
 
 import httpx
 from telegram import Bot, ReplyParameters
-from telegram.error import TelegramError
+from telegram.error import (
+    BadRequest,
+    InvalidToken,
+    NetworkError,
+    TelegramError,
+)
 from telegram.ext import ApplicationHandlerStop
+from telegram.request import HTTPXRequest
 
 if __package__:
     from .bot_mcm import (
@@ -108,6 +114,7 @@ class TemanNgobrol:
             os.environ.get(item[2], "").strip()
             for item in ACTORS
         ]
+
         self.enabled = True
         self.bots = []
         self.ready = False
@@ -129,6 +136,46 @@ class TemanNgobrol:
         self.recent_topics = deque(maxlen=8)
         self.forced = False
 
+        self.connecting = False
+        self.retry_at = 0
+        self.connection_error = "Belum tersambung ke Telegram."
+
+    def status(self):
+        if not self.enabled:
+            return "OFF: dimatikan lewat /teman off."
+
+        missing = [
+            item[2]
+            for item, token in zip(ACTORS, self.tokens)
+            if not token
+        ]
+        if missing:
+            return (
+                "BELUM SIAP: isi "
+                + ", ".join(missing)
+                + " di Railway lalu deploy."
+            )
+
+        if self.controller.ai is None:
+            return "BELUM SIAP: API AI Emak belum dikonfigurasi."
+
+        if not self.controller.chatter_overrides.get(
+            self.group,
+            self.controller.settings.chatter_enabled,
+        ):
+            return "BELUM SIAP: aktifkan /nimbrung on di grup MCB."
+
+        if self.connecting:
+            return (
+                "MENYAMBUNGKAN: sedang menghubungkan "
+                "teman ke Telegram."
+            )
+
+        if not self.ready:
+            return "MENUNGGU KONEKSI: " + self.connection_error
+
+        return "ON: Adit dan Dennis sudah tersambung."
+
     def allowed(self):
         c = self.controller
         return (
@@ -136,7 +183,8 @@ class TemanNgobrol:
             and self.enabled
             and c.ai is not None
             and c.chatter_overrides.get(
-                self.group, c.settings.chatter_enabled
+                self.group,
+                c.settings.chatter_enabled,
             )
         )
 
@@ -150,26 +198,69 @@ class TemanNgobrol:
             )
             return
 
+        if self.task is None or self.task.done():
+            self.task = asyncio.create_task(self.run())
+
+        self.wake.set()
+
+    async def close_bots(self, bots):
+        for bot in bots:
+            try:
+                await bot.shutdown()
+            except TelegramError:
+                pass
+
+    async def connect(self):
+        self.connecting = True
+        bots = []
+        stage = "koneksi Telegram"
+
         try:
-            for (_, username, _), token in zip(ACTORS, self.tokens):
-                bot = Bot(token=token)
-                self.bots.append(bot)
+            for (_, username, _), token in zip(
+                ACTORS, self.tokens
+            ):
+                stage = "koneksi @" + username
+
+                request = HTTPXRequest(
+                    connect_timeout=15,
+                    read_timeout=30,
+                    write_timeout=30,
+                    pool_timeout=10,
+                    connection_pool_size=8,
+                )
+                bot = Bot(
+                    token=token,
+                    request=request,
+                )
+                bots.append(bot)
+
                 await bot.initialize()
 
                 if (
                     bot.username.lower() != username
-                    or bot.id == application.bot.id
+                    or bot.id == self.application.bot.id
                 ):
                     raise ValueError(
                         "Identitas token teman tidak sesuai username."
                     )
 
-                member = await application.bot.get_chat_member(
-                    self.group, bot.id
+                stage = "izin grup @" + username
+
+                member = (
+                    await self.application.bot.get_chat_member(
+                        self.group,
+                        bot.id,
+                        read_timeout=30,
+                        connect_timeout=15,
+                    )
                 )
+
                 if (
                     member.status not in (
-                        "member", "administrator", "creator", "restricted"
+                        "member",
+                        "administrator",
+                        "creator",
+                        "restricted",
                     )
                     or (
                         member.status == "restricted"
@@ -180,38 +271,86 @@ class TemanNgobrol:
                     )
                 ):
                     raise ValueError(
-                        "Teman belum boleh mengirim pesan ke grup utama."
+                        "Teman belum boleh mengirim pesan "
+                        "ke grup utama."
                     )
 
+            if not self.enabled:
+                await self.close_bots(bots)
+                return
+
+            self.bots = bots
             self.ready = True
-            self.task = asyncio.create_task(self.run())
+            self.connection_error = ""
+
             logger.info(
-                "Teman Emak siap: @aditsapo_bot dan @denisjarwo_bot; "
-                "jeda sepi 45 menit."
+                "Teman Emak siap: @aditsapo_bot dan "
+                "@denisjarwo_bot; jeda sepi 45 menit."
             )
 
-        except (TelegramError, ValueError) as error:
-            logger.warning(
-                "Teman belum aktif: jenis=%s. "
-                "Periksa token, username, dan izin grup.",
-                type(error).__name__,
+        except asyncio.CancelledError:
+            await self.close_bots(bots)
+            raise
+
+        except (
+            TelegramError,
+            httpx.HTTPError,
+            TimeoutError,
+            ValueError,
+        ) as error:
+            self.ready = False
+
+            transient = (
+                isinstance(
+                    error,
+                    (NetworkError, httpx.HTTPError, TimeoutError),
+                )
+                and not isinstance(error, BadRequest)
             )
-            await self.stop()
+            retry = 30 if transient else 300
+            self.retry_at = self.clock() + retry
+
+            if isinstance(error, InvalidToken):
+                reason = (
+                    "Token tidak diterima Telegram. "
+                    "Periksa pasangan variable token."
+                )
+            elif isinstance(error, ValueError):
+                reason = str(error)
+            else:
+                reason = f"{stage}: {type(error).__name__}."
+
+            self.connection_error = (
+                reason
+                + f" Dicoba ulang otomatis sekitar {retry} "
+                "detik lagi."
+            )
+
+            logger.warning(
+                "Teman belum aktif: tahap=%s; jenis=%s; "
+                "ulang dalam %ss.",
+                stage,
+                type(error).__name__,
+                retry,
+            )
+
+            await self.close_bots(bots)
+
+        finally:
+            self.connecting = False
 
     async def stop(self):
         self.ready = False
 
         if self.task:
             self.task.cancel()
-            await asyncio.gather(self.task, return_exceptions=True)
+            await asyncio.gather(
+                self.task,
+                return_exceptions=True,
+            )
             self.task = None
 
-        for bot in self.bots:
-            try:
-                await bot.shutdown()
-            except TelegramError:
-                pass
-
+        await self.close_bots(self.bots)
         self.bots.clear()
 
     def finish(self):
@@ -229,7 +368,8 @@ class TemanNgobrol:
             return
 
         if update.effective_chat.id not in (
-            self.group, self.controller.settings.owner_id
+            self.group,
+            self.controller.settings.owner_id,
         ):
             return
 
@@ -241,17 +381,20 @@ class TemanNgobrol:
         if action == "off":
             self.enabled = False
             self.finish()
+
         elif action == "on":
             self.enabled = True
             self.next_session = self.clock() + 2700
+            self.retry_at = 0
+            await self.start(context.application)
+
         elif action == "tes" and self.allowed():
             self.finish()
             self.forced = True
             self.wake.set()
 
-        status = "ON" if self.allowed() else "OFF / belum siap"
         await update.effective_message.reply_text(
-            f"Teman Emak: {status}. "
+            f"Teman Emak: {self.status()}\n"
             "/teman on, /teman off, /teman tes.\n"
             "Normalnya mulai setelah grup sepi 45 menit; "
             "maksimal satu sesi per jam.",
@@ -296,7 +439,8 @@ class TemanNgobrol:
             return
 
         if not self.controller.chatter_overrides.get(
-            self.group, self.controller.settings.chatter_enabled
+            self.group,
+            self.controller.settings.chatter_enabled,
         ):
             return
 
@@ -312,8 +456,11 @@ class TemanNgobrol:
 
                 self.last_bt[m.from_user.id] = self.clock()
                 self.controller.cancel_unanswered(self.group)
+
                 await self.controller.send_group_text(
-                    m, BT_TEXT, parse_mode=None
+                    m,
+                    BT_TEXT,
+                    parse_mode=None,
                 )
 
             raise ApplicationHandlerStop
@@ -340,7 +487,9 @@ class TemanNgobrol:
                 target = index
                 break
 
-        if target is None and addressed_question(m, context.bot):
+        if target is None and addressed_question(
+            m, context.bot
+        ):
             self.finish()
             return
 
@@ -362,10 +511,12 @@ class TemanNgobrol:
             "speaker": "member",
             "text": text[:500],
         })
+
         self.pending = (
             target if target is not None else self.turn % 3,
             m.message_id,
         )
+
         self.wake.set()
         raise ApplicationHandlerStop
 
@@ -376,6 +527,7 @@ class TemanNgobrol:
         self.member_replies = 0
         self.pending = None
         self.history.clear()
+
         self.topic = random.choice([
             topic
             for topic in TOPICS
@@ -385,17 +537,19 @@ class TemanNgobrol:
 
     async def run(self):
         while True:
-            try:
-                await asyncio.wait_for(
-                    self.wake.wait(), timeout=20
-                )
-            except TimeoutError:
-                pass
-
             self.wake.clear()
 
             try:
-                await self.tick()
+                if (
+                    self.enabled
+                    and not self.ready
+                    and self.clock() >= self.retry_at
+                ):
+                    await self.connect()
+
+                if self.ready:
+                    await self.tick()
+
             except (
                 TelegramError,
                 httpx.HTTPError,
@@ -409,6 +563,14 @@ class TemanNgobrol:
                     type(error).__name__,
                 )
                 self.finish()
+
+            try:
+                await asyncio.wait_for(
+                    self.wake.wait(),
+                    timeout=20,
+                )
+            except TimeoutError:
+                pass
 
     async def tick(self):
         async with self.lock:
@@ -443,6 +605,7 @@ class TemanNgobrol:
 
             pending = self.pending
             revision = self.revision
+
             index, reply_id = (
                 pending
                 if pending
@@ -476,15 +639,19 @@ class TemanNgobrol:
                 async with c.ai.semaphore:
                     response = await c.ai.client.post(
                         c.ai.endpoint(),
-                        json=c.ai.payload(history, RULES),
+                        json=c.ai.payload(
+                            history, RULES
+                        ),
                     )
 
             if response.status_code != 200:
                 c.ai.backoff_until = c.clock() + 60
+
                 logger.warning(
                     "AI dialog teman tertunda: HTTP %s",
                     response.status_code,
                 )
+
                 self.finish()
                 return
 
@@ -544,12 +711,15 @@ class TemanNgobrol:
                 "speaker": actor,
                 "text": text[:350],
             })
+
             c.history.setdefault(
-                self.group, deque(maxlen=8)
+                self.group,
+                deque(maxlen=8),
             ).append({
                 "speaker": actor,
                 "text": text[:350],
             })
+
             c.last_reply[self.group] = self.clock()
 
             if pending:
