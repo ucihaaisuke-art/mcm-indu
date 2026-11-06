@@ -1,0 +1,11 @@
+.git
+.env
+.env.*
+__pycache__
+*.pyc
+*.sqlite3*
+*.db
+*.zip
+*.mp4
+.venv
+.venvs
