@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import os
 import re
 import sys
 import tempfile
@@ -61,6 +62,62 @@ class DownloadError(Exception):
     pass
 
 
+def x_session_file(folder):
+    """Sesi akun milik owner; hanya disimpan sementara selama pengunduhan."""
+    names = ("MCM_X_AUTH_TOKEN", "MCM_X_CT0")
+    values = [os.environ.get(name, "").strip() for name in names]
+    if not any(values):
+        return None
+    if not all(re.fullmatch(r"[A-Za-z0-9._~%+/:=-]{16,4096}", value) for value in values):
+        raise DownloadError(
+            "Sesi X belum lengkap atau formatnya salah, le. "
+            "Isi MCM_X_AUTH_TOKEN dan MCM_X_CT0 langsung di Railway Variables.")
+    path = Path(folder) / ".x-session"
+    rows = ["# Netscape HTTP Cookie File"]
+    for domain in (".x.com", ".twitter.com"):
+        for name, value in zip(("auth_token", "ct0"), values):
+            rows.append(f"{domain}\tTRUE\t/\tTRUE\t0\t{name}\t{value}")
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+        stream.write("\n".join(rows) + "\n")
+    return path
+
+
+def download_failure(stderr, returncode, authenticated, limit_mb):
+    """Kelompokkan error; jangan mencatat stderr mentah yang mungkin berisi rahasia."""
+    detail = stderr.decode("utf-8", errors="replace").lower()
+    if "no module named yt_dlp" in detail:
+        code = "DEPENDENCY"
+        message = "Paket yt-dlp belum terpasang. Tambahkan di requirements.txt lalu deploy, le."
+    elif any(value in detail for value in (
+            "requires authentication", "login required", "sign in to", "not authorized",
+            "http error 401", "protected tweet", "log in to")):
+        code = "AUTH_REQUIRED"
+        message = ("X belum menerima sesi akun ini atau akunnya tidak diberi akses, le. "
+                   "Perbarui sesi dari browser dan pastikan akun itu bisa membuka postingannya.") if authenticated else (
+                   "Postingan ini meminta login X, le. Sesi akun X belum dipasang di bot.")
+    elif "429" in detail or "rate limit" in detail or "too many requests" in detail:
+        code = "RATE_LIMIT"
+        message = "X sedang membatasi permintaan unduh, le. Tunggu dulu lalu coba lagi."
+    elif "larger than max-filesize" in detail or "max-filesize limit" in detail:
+        code = "SIZE_LIMIT"
+        message = f"Videonya melewati batas {limit_mb} MB, le."
+    elif "requested format is not available" in detail:
+        code = "FORMAT"
+        message = "Format MP4 postingan ini belum bisa diambil oleh pengunduh, le."
+    elif "http error 403" in detail or "forbidden" in detail:
+        code = "ACCESS_DENIED"
+        message = "X menolak akses unduhan dari server ini, le. Sesi atau izin akses perlu diperiksa."
+    elif "does not exist" in detail or "no video" in detail or "not contain any video" in detail:
+        code = "NO_VIDEO"
+        message = "Postingannya tidak ditemukan atau tidak memuat video yang bisa diambil, le."
+    else:
+        code = "EXTRACT_FAILED"
+        message = "Pengunduh belum berhasil mengambil video dari X, le. Periksa kode error di Deploy Logs."
+    logger.warning("Unduhan X gagal: kode=%s; exit=%s; sesi=%s", code, returncode, authenticated)
+    return DownloadError(message)
+
+
 async def download_video(url, folder):
     """Subproses dibatasi waktu/ukuran dan dihentikan sebelum file sementara dibuang."""
     target = Path(folder) / "video.mp4"
@@ -69,23 +126,32 @@ async def download_video(url, folder):
     except ValueError as error:
         raise DownloadError(str(error)) from None
     limit_mb = limit // (1024 * 1024)
+    session = x_session_file(folder)
     args = [sys.executable, "-m", "yt_dlp", "--ignore-config", "--no-plugin-dirs",
             "--no-cache-dir", "--no-warnings", "--no-progress", "--socket-timeout", "15",
             "--retries", "1", "--fragment-retries", "1", "--playlist-items", "1",
             "--max-downloads", "1", "--max-filesize", str(limit),
             "--format", f"best[ext=mp4][protocol=https][filesize<=?{limit}]/bestvideo[ext=mp4][protocol=https][filesize<=?{limit}]",
-            "--output", str(Path(folder) / "video.%(ext)s"), "--", url]
-    process = await asyncio.create_subprocess_exec(
-        *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-    reader = asyncio.create_task(process.communicate())
-    deadline = asyncio.get_running_loop().time() + (1800 if local_enabled() else 120)
+            "--output", str(Path(folder) / "video.%(ext)s")]
+    if session is not None:
+        args.extend(["--cookies", str(session)])
+    args.extend(["--", url])
+    environment = dict(os.environ)
+    for name in ("MCM_X_AUTH_TOKEN", "MCM_X_CT0"):
+        environment.pop(name, None)
+    process = reader = None
     try:
+        process = await asyncio.create_subprocess_exec(
+            *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            env=environment)
+        reader = asyncio.create_task(process.communicate())
+        deadline = asyncio.get_running_loop().time() + (1800 if local_enabled() else 120)
         while not reader.done():
             await asyncio.wait((reader,), timeout=0.5)
             size = 0
             for path in Path(folder).iterdir():
                 try:
-                    if path.is_file():
+                    if path != session and path.is_file():
                         size += path.stat().st_size
                 except FileNotFoundError:
                     pass
@@ -96,23 +162,24 @@ async def download_video(url, folder):
             if asyncio.get_running_loop().time() >= deadline:
                 raise DownloadError("Unduhannya kehabisan waktu, le. Coba lagi nanti.")
         _, stderr = await reader
-        if b"No module named yt_dlp" in stderr:
-            raise DownloadError("Paket yt-dlp belum terpasang. Tambahkan di requirements.txt lalu deploy, le.")
         if process.returncode not in (0, 101) or not target.is_file() or not target.stat().st_size:
-            raise DownloadError("Video belum bisa diambil, le. Pastikan link berisi video publik; unggahan yang meminta login atau dibatasi X bisa gagal.")
+            raise download_failure(stderr, process.returncode, session is not None, limit_mb)
         if target.stat().st_size > limit:
             raise DownloadError(f"Videonya lebih dari batas {limit_mb} MB, le.")
         return target
     finally:
-        if process.returncode is None:
+        if process is not None and process.returncode is None:
             try:
                 process.kill()
             except ProcessLookupError:
                 pass
             await process.wait()
-        if not reader.done():
-            reader.cancel()
-        await asyncio.gather(reader, return_exceptions=True)
+        if reader is not None:
+            if not reader.done():
+                reader.cancel()
+            await asyncio.gather(reader, return_exceptions=True)
+        if session is not None:
+            session.unlink(missing_ok=True)
 
 
 class UnduhX:
