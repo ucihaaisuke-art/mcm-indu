@@ -1,7 +1,10 @@
 [build]
-buildCommand = "pip install -r requirements.txt"
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
 
 [deploy]
-startCommand = "python bot_gabungan.py"
+startCommand = "python mulai_lokal.py"
 healthcheckPath = "/health"
+healthcheckTimeout = 300
+restartPolicyType = "ON_FAILURE"
 numReplicas = 1
