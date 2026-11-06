@@ -15,11 +15,11 @@ from telegram.error import BadRequest, NetworkError, TelegramError
 
 if __package__:
     from .bot_mcm import RELAY_COMMAND
-    from .vip_mcm import PLANS, VIP_GROUPS
+    from .vip_mcm import VIP_GROUPS
     from .api_lokal import download_limit, local_enabled
 else:
     from bot_mcm import RELAY_COMMAND
-    from vip_mcm import PLANS, VIP_GROUPS
+    from vip_mcm import VIP_GROUPS
     from api_lokal import download_limit, local_enabled
 
 logger = logging.getLogger(__name__)
@@ -29,9 +29,44 @@ URL = re.compile(
     r"(?P<path>(?:[a-zA-Z0-9_]{1,15}/status/|i/(?:web/)?status/)"
     r"(?P<id>[0-9]{1,25})(?:/video/[1-4])?)(?![\w/])(?:\?[^\s<>]*)?", re.I)
 GROUP_COMMAND = re.compile(
-    r"download\s+video\s+ini\s+kirim\s+ke\s+(?:(?:4|empat)\s+)?grup(?:\s+vip)?\s*:?", re.I)
+    r"download\s+video\s+ini\s+kirim\s+ke\s+(?:(?P<count>4|empat|semua)\s+)?grup"
+    r"(?:\s+vip)?(?P<names>(?:\s*:.*|\s+.*)?)", re.I)
 CAPTION = re.compile(r"^\s*(?:dengan\s+)?caption\s*:[ \t]?(.*)$", re.I | re.M | re.S)
 GROUP_KEYS = ("chil_vip", "indo_premium", "gay_lesby_acak", "full_paket")
+CODE = r"(?:I\s*VIP|G\s*VIP|A\s*VIP|A1|I2|A3)"
+CODE_LINE = re.compile(rf"{CODE}(?:\s*(?:,|\+|\bdan\b)\s*{CODE})*", re.I)
+CODE_HEAD = re.compile(rf"{CODE}\s*(?:,|\+|\bdan\b)", re.I)
+TOPIC_CODES = {
+    "topic_a1": ("MCM_X_TOPIC_A1_ID", "A1"),
+    "topic_i2": ("MCM_X_TOPIC_I2_ID", "I2"),
+    "topic_a3": ("MCM_X_TOPIC_A3_ID", "A3"),
+}
+TOPIC_DEFAULTS = {
+    "topic_a1": (-1004377838078, 14),
+    "topic_i2": (-1004377838078, 10),
+    "topic_a3": (-1004377838078, 12),
+}
+GROUP_LABELS = {
+    "chil_vip": "VIDEO AI HD",
+    "indo_premium": "INDO PREMIUM",
+    "gay_lesby_acak": "GAY/LESBY ACAK",
+    "full_paket": "TOKO GEN Z (TAKE ALL)",
+    "topic_a1": "TOKO GEN Z / ALL G/L (A1)",
+    "topic_i2": "TOKO GEN Z / INDO PREMIUM (I2)",
+    "topic_a3": "TOKO GEN Z / AI HD (A3)",
+}
+GROUP_NAMES = {
+    "chil_vip": ("ai", "ai hd", "video ai", "video ai hd", "a vip", "avip"),
+    "indo_premium": ("indo", "indo premium", "i vip", "ivip"),
+    "gay_lesby_acak": (
+        "gl", "g l", "gay lesby", "gay lesby acak", "gay lesbi", "gay lesbi acak",
+        "gay lesbiola", "gay lesbiola acak", "g4y lesbiola", "g4y lesbiola acak",
+        "gay", "lesby", "lesbi", "g4y lesby", "g4y lesby acak", "g vip", "gvip"),
+    "full_paket": ("toko gen z", "toko genz", "tokogenz", "take all", "take all grup", "takeall"),
+    "topic_a1": ("a1",),
+    "topic_i2": ("i2",),
+    "topic_a3": ("a3",),
+}
 
 
 @dataclass(frozen=True)
@@ -39,6 +74,53 @@ class Request:
     url: str
     publish: bool
     caption: str | None
+    targets: tuple[str, ...] = ()
+
+
+def selected_groups(command):
+    names = command.group("names").strip().removeprefix(":").strip()
+    if command.group("count") and names:
+        raise ValueError("Pilih nama grup atau perintah semua grup, le. Jangan digabung dalam satu tujuan.")
+    if not names or names.casefold() == "semua":
+        return GROUP_KEYS
+    return selected_names(names)
+
+
+def selected_names(names):
+    aliases = {name: key for key, values in GROUP_NAMES.items() for name in values}
+    targets = []
+    for value in re.split(r",|\+|\bdan\b", names, flags=re.I):
+        name = re.sub(r"[\s/_-]+", " ", value.casefold()).strip()
+        key = aliases.get(name)
+        if key is None:
+            raise ValueError(
+                "Tujuan belum dikenali, le. Pilih kode I VIP, G VIP, A VIP, A1, I2, "
+                "atau A3. Pisahkan beberapa tujuan dengan koma.")
+        if key not in targets:
+            targets.append(key)
+    return tuple(targets)
+
+
+def resolve_routes(targets):
+    routes = []
+    for key in targets:
+        thread_id = None
+        group_key = key
+        if key in TOPIC_CODES:
+            variable, code = TOPIC_CODES[key]
+            value = os.environ.get(variable)
+            if value is None:
+                expected_chat, default_topic = TOPIC_DEFAULTS[key]
+                if VIP_GROUPS.get("full_paket") != expected_chat:
+                    raise ValueError(f"Grup TOKO GEN Z berubah, le. Perbarui ID topik {code} di {variable}.")
+                value = str(default_topic)
+            value = value.strip()
+            if not re.fullmatch(r"[1-9][0-9]*", value) or len(value) > 10 or int(value) > 2147483647:
+                raise ValueError(f"Topik {code} belum disetel, le. Isi {variable} dengan ID topik yang benar.")
+            thread_id = int(value)
+            group_key = "full_paket"
+        routes.append((GROUP_LABELS[key], VIP_GROUPS[group_key], thread_id))
+    return routes
 
 
 def parse_request(text):
@@ -49,13 +131,24 @@ def parse_request(text):
         return None
     if len({match.group("id") for match in links}) != 1:
         raise ValueError("Kirim satu link unggahan Twitter/X per pesan, le.")
-    publish = any(GROUP_COMMAND.fullmatch(URL.sub("", line).strip()) for line in header.splitlines())
+    commands = []
+    for line in header.splitlines():
+        instruction = URL.sub("", line).strip()
+        match = GROUP_COMMAND.fullmatch(instruction)
+        if match:
+            commands.append(selected_groups(match))
+        elif CODE_LINE.fullmatch(instruction) or CODE_HEAD.match(instruction):
+            commands.append(selected_names(instruction))
+    if len(commands) > 1:
+        raise ValueError("Pakai satu baris kode tujuan, le. Pisahkan beberapa kode dengan koma.")
+    targets = commands[0] if commands else ()
+    publish = bool(targets)
     if publish and re.search(r"\b(?:jangan|gausah|gakusah|tidak usah)\b.*\b(?:download|unduh|kirim)\b", header, re.I):
         raise ValueError("Instruksi kirimnya bertentangan, le. Kirim ulang satu perintah yang jelas.")
     value = caption.group(1).rstrip() if caption else None
     if value is not None and len(value.encode("utf-16-le")) // 2 > 1024:
         raise ValueError("Caption terlalu panjang, le. Maksimal 1024 karakter Telegram.")
-    return Request("https://x.com/" + links[0].group("path"), publish, value)
+    return Request("https://x.com/" + links[0].group("path"), publish, value, targets)
 
 
 class DownloadError(Exception):
@@ -200,6 +293,14 @@ class UnduhX:
                     bot_id INTEGER NOT NULL, owner_id INTEGER NOT NULL, message_id INTEGER NOT NULL,
                     target_id INTEGER NOT NULL, state TEXT NOT NULL, sent_message_id INTEGER,
                     PRIMARY KEY(bot_id,owner_id,message_id,target_id));
+                CREATE TABLE IF NOT EXISTS mcm_x_routes (
+                    bot_id INTEGER NOT NULL, owner_id INTEGER NOT NULL, message_id INTEGER NOT NULL,
+                    target_id INTEGER NOT NULL, thread_id INTEGER NOT NULL DEFAULT 0,
+                    state TEXT NOT NULL, sent_message_id INTEGER,
+                    PRIMARY KEY(bot_id,owner_id,message_id,target_id,thread_id));
+                INSERT OR IGNORE INTO mcm_x_routes
+                    SELECT bot_id,owner_id,message_id,target_id,0,state,sent_message_id
+                    FROM mcm_x_targets;
             """)
 
     def state(self, key, state):
@@ -235,13 +336,16 @@ class UnduhX:
             await m.reply_text("Masih ada satu video yang sedang diproses, le. Tunggu selesai lalu kirim link berikutnya ya.")
             return
         try:
-            groups = [(PLANS[name].name, VIP_GROUPS[name]) for name in GROUP_KEYS] if request.publish else [("Chat pribadi", m.chat.id)]
-        except KeyError:
-            await m.reply_text("Konfigurasi empat paket/grup VIP belum lengkap, le.")
+            groups = resolve_routes(request.targets) if request.publish else [("Chat pribadi", m.chat.id, None)]
+        except ValueError as error:
+            await m.reply_text(str(error), parse_mode=None)
             return
-        if request.publish and (len({group for _, group in groups}) != 4
-                                or self.c.settings.target_group_id in {group for _, group in groups}):
-            await m.reply_text("Periksa konfigurasi empat grup VIP dulu, le. Tujuannya harus berbeda dari grup MCB utama.")
+        except KeyError:
+            await m.reply_text("Konfigurasi grup VIP tujuan belum lengkap, le.")
+            return
+        if request.publish and (not groups or len({(group, topic) for _, group, topic in groups}) != len(groups)
+                                or self.c.settings.target_group_id in {group for _, group, _ in groups}):
+            await m.reply_text("Periksa ID grup tujuan dulu, le. Setiap tujuan harus berbeda dan tidak boleh grup MCB utama.")
             return
         with self.store.lock, self.store.connection:
             inserted = self.store.connection.execute(
@@ -263,18 +367,21 @@ class UnduhX:
     async def run(self, message, bot, request, groups, key):
         try:
             try:
-                await message.reply_text("Bentar le, videonya aku ambil dulu.", parse_mode=None)
+                text = "Bentar le, videonya aku ambil dulu."
+                if request.publish:
+                    text += "\nTujuan: " + ", ".join(name for name, _, _ in groups)
+                await message.reply_text(text, parse_mode=None)
             except TelegramError:
                 pass
             with tempfile.TemporaryDirectory(prefix="mcm-x-") as folder:
                 path = await self.downloader(request.url, folder)
                 results, file_id = [], None
                 self.state(key, "sending")
-                for name, group_id in groups:
+                for name, group_id, thread_id in groups:
                     with self.store.lock, self.store.connection:
                         claimed = self.store.connection.execute(
-                            "INSERT OR IGNORE INTO mcm_x_targets VALUES(?,?,?,?,?,NULL)",
-                            (*key, group_id, "sending")).rowcount
+                            "INSERT OR IGNORE INTO mcm_x_routes VALUES(?,?,?,?,?,?,NULL)",
+                            (*key, group_id, thread_id or 0, "sending")).rowcount
                     if not claimed:
                         continue
                     try:
@@ -283,6 +390,8 @@ class UnduhX:
                         kwargs = dict(chat_id=group_id, caption=request.caption, parse_mode=None,
                                       supports_streaming=True, write_timeout=timeout, read_timeout=timeout,
                                       connect_timeout=20, pool_timeout=10)
+                        if thread_id is not None:
+                            kwargs["message_thread_id"] = thread_id
                         if not request.publish:
                             kwargs["reply_parameters"] = ReplyParameters(
                                 message_id=message.message_id, allow_sending_without_reply=True)
@@ -297,15 +406,16 @@ class UnduhX:
                         if getattr(sent, "video", None):
                             file_id = sent.video.file_id
                         with self.store.lock, self.store.connection:
-                            self.store.connection.execute("UPDATE mcm_x_targets SET state='sent',sent_message_id=? "
-                                "WHERE bot_id=? AND owner_id=? AND message_id=? AND target_id=?",
-                                (sent.message_id, *key, group_id))
+                            self.store.connection.execute("UPDATE mcm_x_routes SET state='sent',sent_message_id=? "
+                                "WHERE bot_id=? AND owner_id=? AND message_id=? AND target_id=? AND thread_id=?",
+                                (sent.message_id, *key, group_id, thread_id or 0))
                         results.append(f"✅ {name}")
                     except TelegramError as error:
                         state = "uncertain" if isinstance(error, NetworkError) and not isinstance(error, BadRequest) else "failed"
                         with self.store.lock, self.store.connection:
-                            self.store.connection.execute("UPDATE mcm_x_targets SET state=? "
-                                "WHERE bot_id=? AND owner_id=? AND message_id=? AND target_id=?", (state, *key, group_id))
+                            self.store.connection.execute("UPDATE mcm_x_routes SET state=? "
+                                "WHERE bot_id=? AND owner_id=? AND message_id=? AND target_id=? AND thread_id=?",
+                                (state, *key, group_id, thread_id or 0))
                         place = "grup tujuan" if request.publish else "chat ini"
                         results.append(f"⚠️ {name}: " + (f"hasil kirim belum pasti; cek {place} dulu" if state == "uncertain" else "Telegram menolak kiriman; periksa izin bot"))
                         logger.warning("Kiriman Twitter/X tertunda: jenis=%s", type(error).__name__)
