@@ -1,4 +1,4 @@
-"""MCM: moderasi, chat pribadi, video, VIP, dan teman Emak."""
+"""MCM: moderasi, chat pribadi, VIP, teman Emak, dan pemeliharaan."""
 
 import asyncio
 import logging
@@ -21,12 +21,12 @@ if __package__:
     from .bot_mcm import CommunityBot, Settings, health_handler
     from .chat_pribadi import pasang_chat_pribadi
     from .vip_mcm import pasang_vip_mcm
-    from .teman_ngobrol import TemanNgobrol
+    from .rapikan_mcb import RapikanMcb, TemanTerawat
 else:
     from bot_mcm import CommunityBot, Settings, health_handler
     from chat_pribadi import pasang_chat_pribadi
     from vip_mcm import pasang_vip_mcm
-    from teman_ngobrol import TemanNgobrol
+    from rapikan_mcb import RapikanMcb, TemanTerawat
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +55,8 @@ def main():
     pasang_vip_mcm(bot_class)
 
     controller = bot_class(Settings.from_env())
-    friends = TemanNgobrol(controller)
+    maintenance = RapikanMcb(controller)
+    friends = TemanTerawat(controller, maintenance)
     server = None
 
     async def post_init(application):
@@ -63,6 +64,7 @@ def main():
 
         controller.vip.bot = application.bot
         await friends.start(application)
+        await maintenance.start(application, friends)
 
         logger.info(
             "Akun Telegram yang dipakai: @%s (ID %s).",
@@ -88,10 +90,12 @@ def main():
         )
 
     async def post_stop(application):
+        await maintenance.stop()
         await friends.stop()
         await controller.stop_guidance()
 
     async def post_shutdown(application):
+        await maintenance.stop()
         await friends.stop()
         await controller.stop_guidance()
 
@@ -107,10 +111,9 @@ def main():
     async def error_handler(update, context):
         if isinstance(context.error, Conflict):
             logger.error(
-                "Polling Telegram konflik. "
-                "Periksa apakah token bot yang sama "
-                "sedang dipakai deployment/service lain "
-                "atau webhook masih aktif."
+                "Polling Telegram konflik. Periksa apakah "
+                "token bot yang sama sedang dipakai "
+                "deployment/service lain atau webhook masih aktif."
             )
             return
 
@@ -137,13 +140,19 @@ def main():
 
     app.add_handler(
         MessageHandler(
+            filters.ChatType.GROUPS,
+            maintenance.observe,
+        ),
+        group=-3,
+    )
+    app.add_handler(
+        MessageHandler(
             filters.StatusUpdate.NEW_CHAT_MEMBERS
             | filters.StatusUpdate.LEFT_CHAT_MEMBER,
             controller.service_notice,
         ),
         group=-2,
     )
-
     app.add_handler(
         MessageHandler(
             filters.ChatType.GROUPS,
@@ -242,7 +251,6 @@ def main():
             controller.private_text,
         )
     )
-
     app.add_handler(
         MessageHandler(
             filters.ChatType.GROUPS,
