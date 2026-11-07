@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 VIP_GROUPS = {
     "chil_vip": -1004328410781,
     "indo_premium": -1004434516169,
-    "gay_lesby_acak": -5370555952,
+    "gay_lesby_acak": -1004461271623,
     "full_paket": -1004377838078,
 }
 
