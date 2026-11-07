@@ -1,15 +1,20 @@
 """Satu bot MCM: moderasi grup, chat/media pribadi, dan VIP QRIS manual."""
 
+import asyncio
 import logging
 import os
 import threading
-import asyncio
 from http.server import ThreadingHTTPServer
 
 from telegram.error import Conflict, TelegramError
 from telegram.ext import (
-    Application, CallbackQueryHandler, ChatJoinRequestHandler, ChatMemberHandler,
-    CommandHandler, MessageHandler, filters,
+    Application,
+    CallbackQueryHandler,
+    ChatJoinRequestHandler,
+    ChatMemberHandler,
+    CommandHandler,
+    MessageHandler,
+    filters,
 )
 
 if __package__:
@@ -18,6 +23,7 @@ if __package__:
     from .vip_mcm import pasang_vip_mcm
     from .rapikan_mcb import RapikanMcb, TemanTerawat
     from .unduh_x import UnduhX
+    from .kirim_video_vip import KirimVideoVIP
     from .api_lokal import configure_builder, local_enabled
 else:
     from bot_mcm import CommunityBot, Settings, health_handler
@@ -25,13 +31,17 @@ else:
     from vip_mcm import pasang_vip_mcm
     from rapikan_mcb import RapikanMcb, TemanTerawat
     from unduh_x import UnduhX
+    from kirim_video_vip import KirimVideoVIP
     from api_lokal import configure_builder, local_enabled
 
 logger = logging.getLogger(__name__)
 
 
 def main():
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(levelname)s %(message)s",
+    )
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
     logging.getLogger("telegram").setLevel(logging.CRITICAL)
@@ -50,12 +60,13 @@ def main():
     maintenance = RapikanMcb(controller)
     friends = TemanTerawat(controller, maintenance)
     downloads = UnduhX(controller)
+    uploads = KirimVideoVIP(controller)
     server = None
 
     async def post_init(application):
         nonlocal server
-        controller.vip.bot = application.bot
 
+        controller.vip.bot = application.bot
         await friends.start(application)
         await maintenance.start(application, friends)
 
@@ -79,12 +90,14 @@ def main():
         )
 
     async def post_stop(application):
+        await uploads.stop()
         await downloads.stop()
         await maintenance.stop()
         await friends.stop()
         await controller.stop_guidance()
 
     async def post_shutdown(application):
+        await uploads.stop()
         await downloads.stop()
         await maintenance.stop()
         await friends.stop()
@@ -119,7 +132,15 @@ def main():
         await friends.observe(update, context)
 
     async def owner_text(update, context):
+        if await uploads.reply_text(update, context):
+            return
         await downloads.owner_text(update, context)
+
+    async def upload_command(update, context):
+        await uploads.command(update, context)
+
+    async def media_received(update, context):
+        await uploads.private_media(update, context)
 
     app = (
         configure_builder(Application.builder().token(token))
@@ -136,7 +157,10 @@ def main():
         )
 
     app.add_handler(
-        MessageHandler(filters.ChatType.GROUPS, maintenance.observe),
+        MessageHandler(
+            filters.ChatType.GROUPS,
+            maintenance.observe,
+        ),
         group=-3,
     )
 
@@ -150,22 +174,46 @@ def main():
     )
 
     app.add_handler(
-        MessageHandler(filters.ChatType.GROUPS, controller.moderate),
+        MessageHandler(
+            filters.ChatType.GROUPS,
+            controller.moderate,
+        ),
         group=-1,
     )
 
-    app.add_handler(CommandHandler(["start", "star"], controller.start))
-    app.add_handler(CommandHandler("vip", controller.vip_menu))
+    app.add_handler(
+        CommandHandler(["start", "star"], controller.start)
+    )
+    app.add_handler(
+        CommandHandler("vip", controller.vip_menu)
+    )
     app.add_handler(
         CommandHandler(["akses", "cek", "pending"], controller.vip_command)
     )
-    app.add_handler(CommandHandler("setqris", controller.vip_qris))
-    app.add_handler(CommandHandler("batal", controller.vip_cancel))
-    app.add_handler(CommandHandler("nimbrung", controller.control))
-    app.add_handler(CommandHandler("teman", teman_command))
-    app.add_handler(CommandHandler("id", controller.show_id))
-    app.add_handler(CommandHandler("hapuswelcome", controller.remove_welcome))
-    app.add_handler(CommandHandler("tesai", controller.test_ai))
+    app.add_handler(
+        CommandHandler("setqris", controller.vip_qris)
+    )
+    app.add_handler(
+        CommandHandler("batal", controller.vip_cancel)
+    )
+    app.add_handler(
+        CommandHandler("nimbrung", controller.control)
+    )
+    app.add_handler(
+        CommandHandler("teman", teman_command)
+    )
+    app.add_handler(
+        CommandHandler("id", controller.show_id)
+    )
+    app.add_handler(
+        CommandHandler("hapuswelcome", controller.remove_welcome)
+    )
+    app.add_handler(
+        CommandHandler("tesai", controller.test_ai)
+    )
+    app.add_handler(
+        CommandHandler("kirim", upload_command)
+    )
 
     app.add_handler(
         MessageHandler(
@@ -173,13 +221,17 @@ def main():
             controller.welcome,
         )
     )
+
     app.add_handler(
         ChatMemberHandler(
             controller.membership,
             ChatMemberHandler.CHAT_MEMBER,
         )
     )
-    app.add_handler(ChatJoinRequestHandler(controller.vip_join))
+
+    app.add_handler(
+        ChatJoinRequestHandler(controller.vip_join)
+    )
 
     app.add_handler(
         CallbackQueryHandler(
@@ -204,7 +256,7 @@ def main():
             filters.ChatType.PRIVATE
             & filters.UpdateType.MESSAGE
             & media,
-            controller.private_media,
+            media_received,
         )
     )
 
@@ -228,12 +280,27 @@ def main():
     )
 
     app.add_handler(
-        MessageHandler(filters.ChatType.GROUPS, teman_observe)
+        MessageHandler(
+            filters.ChatType.GROUPS,
+            teman_observe,
+        )
     )
+
     app.add_handler(
-        MessageHandler(filters.ChatType.GROUPS, controller.chatter),
+        MessageHandler(
+            filters.ChatType.GROUPS,
+            controller.chatter,
+        ),
         group=1,
     )
+
+    if __package__:
+        from .respon_pembayaran import pasang_respon_pembayaran
+    else:
+        from respon_pembayaran import pasang_respon_pembayaran
+
+    pasang_respon_pembayaran(app, controller)
+
     app.add_error_handler(error_handler)
 
     try:
