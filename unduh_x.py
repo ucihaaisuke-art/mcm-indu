@@ -54,16 +54,15 @@ GROUP_LABELS = {
     "topic_a1": "TOKO GEN Z / ALL G/L (A1)",
     "topic_i2": "TOKO GEN Z / INDO PREMIUM (I2)",
     "topic_a3": "TOKO GEN Z / AI HD (A3)",
-}
 GROUP_NAMES = {
     "chil_vip": ("ai", "ai hd", "video ai", "video ai hd", "a vip", "avip"),
     "indo_premium": ("indo", "indo premium", "i vip", "ivip"),
     "gay_lesby_acak": (
         "gl", "g l", "gay lesby", "gay lesby acak", "gay lesbi", "gay lesbi acak",
         "gay lesbiola", "gay lesbiola acak", "g4y lesbiola", "g4y lesbiola acak",
-        "gay", "lesby", "lesbi", "g4y lesby", "g4y lesby acak", "g vip", "gvip"),
+        "gay", "lesby", "lesbi", "g4y lesby", "g4y lesby acak"),
     "full_paket": ("toko gen z", "toko genz", "tokogenz", "take all", "take all grup", "takeall"),
-    "topic_a1": ("a1",),
+    "topic_a1": ("a1", "g vip", "gvip"),
     "topic_i2": ("i2",),
     "topic_a3": ("a3",),
 }
