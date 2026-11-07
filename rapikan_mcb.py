@@ -8,6 +8,7 @@ import random
 import re
 import sqlite3
 import time
+from collections import deque
 from datetime import datetime, timedelta, timezone
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyParameters
@@ -15,9 +16,11 @@ from telegram.error import BadRequest, RetryAfter, TelegramError
 from telegram.ext import ApplicationHandlerStop
 
 if __package__:
+    from .bot_mcm import declines_bot_reply
     from .teman_ngobrol import ALIASES, LOCAL_REPLIES, LOCAL_UNKNOWN, NAMES, TemanNgobrol
     from .vip_mcm import PLANS
 else:
+    from bot_mcm import declines_bot_reply
     from teman_ngobrol import ALIASES, LOCAL_REPLIES, LOCAL_UNKNOWN, NAMES, TemanNgobrol
     from vip_mcm import PLANS
 
@@ -131,6 +134,27 @@ SOCIAL = (
         ("Iya, yang itu aku pensiunkan dulu.", "Gagal mendarat rupanya. Aku ganti jalur candaan."),
         ("Paham, jangan diulang sampai jadi tugas hafalan.", "Oke, kita cari obrolan yang lain."))),
 )
+
+MEDAN_DIALOGS = {
+    "cari_denis": (
+        ("Denis lagi nyusun alasan, le. Biasalah, dipanggil dulu baru nongol.", "Mana ada, Dit. Bujang kali kau, aku di sini dari tadi."),
+        ("Bah, Denis kau cari? Coba bilang makan, cepat dia biasanya nyaut.", "Enak kali cerita kau, Dit. Aku nyaut karena dipanggil, bukan dengar piring."),
+        ("Denis di grup ini, bang. Diamnya aja macam lagi ujian.", "Dit, Dit, diam sebentar kau jadikan bahan laporan pula."),
+        ("Cari Denis rupanya? Nis, keluarlah kau, udah dicari orang.", "Iya, iya, aku nyaut. Kau jangan sok jadi penjaga pintu, Dit."),
+    ),
+    "bisa_adit": (
+        ("Aku bantu hitungan, jelasin hal umum, sama petunjuk grup, bang. Kalau debat mi gomak, Denis paling semangat.", "Dit, Dit, tobatlah kau, Dit. Aku baru dipanggil, udah kau jadikan panitia mi gomak."),
+        ("Bisa bantu soal grup dan pengetahuan umum, bang. Kalau ramal kapan mantan balik, aku angkat tangan.", "Dit, Dit, tobatlah kau. Orang nanya kemampuan, mantan pula kau bawa masuk."),
+        ("Petunjuk grup, pilihan VIP, sama hitungan sederhana bisa aku bantu, bang. Kalau belum tahu, aku bilang terus terang.", "Nah, gitu baru betul, Dit. Jangan semua pertanyaan kau sambut macam ujian nasional."),
+        ("Aku bantu bahas pertanyaan umum dari stok lokal, bang. Kalau perlu jawaban AI, panggil mak; kalau perlu ketawa, coba Denis.", "Bah, bagian lawak kau taruh ke aku semua, Dit. Tepuk tangannya dibagi dua ya."),
+    ),
+    "bisa_denis": (
+        ("Aku bisa bantu petunjuk grup, hitungan ringan, sama ngobrol, bang. Kalau belum tahu, ga kupaksa jadi ahli.", "Betul itu, Nis. Jawab yang paham aja, sisanya kita tanyakan ke Emak."),
+        ("Bisa bantu jelasin hal umum yang ada di stok lokal, bang. Bercanda bisa juga, cuma ga ada garansi ketawa.", "Garansi kau jujur kali, Nis. Setidaknya orang tahu syaratnya dari awal."),
+        ("Soal menu VIP sama cara pakai bot bisa aku bantu, bang. Pembayaran tetap owner yang periksa, bukan lewat tepuk tangan aku.", "Iya, Nis. Yang butuh pilihan paket buka chat pribadi Emak, ketik /vip."),
+        ("Bantu soal grup, hitung sederhana, sama nyambung obrolan, bang. Kalau jawaban belum ada, aku bilang belum tahu.", "Mantap, Nis. Ga semua hal harus dijawab pakai modal percaya diri."),
+    ),
+}
 
 
 def vip_text(*texts):
@@ -340,7 +364,8 @@ class TemanTerawat(TemanNgobrol):
         super().__init__(controller)
         self.maintenance = maintenance
         self.contacts = {}
-        logger.info("Kosakata baru aktif: %s paket dialog; rotasi tersimpan.", len(DAILY_DIALOGS))
+        self.banter_last = {}
+        logger.info("Kosakata Medan aktif: %s paket dialog; sahutan Adit-Denis siap.", len(DAILY_DIALOGS))
 
     def choose(self, slot, options):
         options = tuple(options)
@@ -403,10 +428,64 @@ class TemanTerawat(TemanNgobrol):
             "tanpa memberi nasihat. Jangan mendaur ulang punchline, pembuka, atau perumpamaan dalam "
             "riwayat. Hindari menjadikan saldo, dompet, dan tagihan sebagai lelucon bawaan. "
             "Sambungkan makna tiap giliran, jangan cuma mengganti nama benda dalam lelucon yang sama."
+            " Logat Medan terasa dari irama dan kata seperti bah, kali, macam, kau, abangku; "
+            "pakai sewajarnya. Saling ledek ringan boleh, jangan menyerang member atau memakai "
+            "candaan seksual tentang anak. Jangan mengaku bisa melakukan layanan yang tidak tersedia."
         )
         return await super().generate(history, instructions + fresh, json_mode=json_mode)
 
+    async def medan_exchange(self, update, context):
+        m = update.effective_message
+        if (m is None or update.edited_message is not None or m.chat.id != self.group
+                or m.from_user is None or m.from_user.is_bot or m.sender_chat is not None
+                or not self.allowed() or len(self.bots) != 2):
+            return False
+        text = re.sub(r"\s+", " ", m.text or "").strip()
+        key = (m.chat.id, m.message_id)
+        if (not text or len(text) > 200 or text.startswith("/")
+                or key in self.controller.blocked_messages or declines_bot_reply(text)
+                or self.controller.forbidden_request(m) or re.search(r"\bbt\b", text, re.I)):
+            return False
+        adit, denis = (bool(pattern.search(text)) for pattern in ALIASES)
+        where = re.search(
+            r"\b(?:di\s*mana|dmn|dmna|mana|kemana)\s+(?:si\s+)?(?:den{1,2}is+|nis+)\b", text, re.I)
+        ability = re.search(
+            r"\b(?:bisa|bsa)\s+(?:bantu\s+)?(?:apa(?:\s+aja)?|apaan(?:\s+aja)?|apaaja)\b"
+            r"|\b(?:apa aja|apaan aja)\s+(?:yang\s+)?(?:kau\s+)?bisa\b", text, re.I)
+        kind = ("cari_denis" if adit and where else
+                "bisa_adit" if adit and not denis and ability else
+                "bisa_denis" if denis and not adit and ability else None)
+        if kind is None:
+            return False
+        if key in self.seen:
+            raise ApplicationHandlerStop
+        if len(self.seen) >= 10000:
+            self.seen.clear()
+        self.seen.add(key)
+        self.last_activity = self.clock()
+        self.controller.cancel_unanswered(self.group)
+        self.finish()
+        cooldown_key = (m.from_user.id, kind)
+        if self.clock() - self.banter_last.get(cooldown_key, -100000) < 10:
+            return True
+        if len(self.banter_last) >= 5000:
+            self.banter_last.clear()
+        self.banter_last[cooldown_key] = self.clock()
+        pack = self.choose("banter:" + kind, MEDAN_DIALOGS[kind])
+        order = (1, 0) if kind == "bisa_denis" else (0, 1)
+        revision = self.revision
+        for index, line in zip(order, pack):
+            if not await self.send_text(index, line, message=m, revision=revision):
+                break
+            entry = {"speaker": NAMES[index], "text": line}
+            self.history.append(entry)
+            self.controller.history.setdefault(self.group, deque(maxlen=8)).append(entry)
+            self.controller.last_reply[self.group] = self.clock()
+        return True
+
     async def observe(self, update, context):
+        if await self.medan_exchange(update, context):
+            raise ApplicationHandlerStop
         m = update.effective_message
         if (m is not None and m.chat.id == self.group and update.edited_message is None
                 and m.from_user is not None and not m.from_user.is_bot and m.sender_chat is None
