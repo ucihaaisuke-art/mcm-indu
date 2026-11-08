@@ -1,4 +1,4 @@
-"""Video Twitter/X: balasan pribadi atau kiriman owner berdasarkan genre."""
+"""Video Twitter/X: balasan pribadi atau kiriman owner ke grup VIP."""
 
 import asyncio
 import logging
@@ -23,17 +23,21 @@ else:
     from api_lokal import download_limit, local_enabled
 
 logger = logging.getLogger(__name__)
+
 MAX_BYTES = 45 * 1024 * 1024
 
 URL = re.compile(
-    r"(?<![\w./@-])(?:https?://)?(?:(?:www|mobile)\.)?(?:twitter\.com|x\.com)/"
+    r"(?<![\w./@-])(?:https?://)?(?:(?:www|mobile)\.)?"
+    r"(?:twitter\.com|x\.com)/"
     r"(?P<path>(?:[a-zA-Z0-9_]{1,15}/status/|i/(?:web/)?status/)"
-    r"(?P<id>[0-9]{1,25})(?:/video/[1-4])?)(?![\w/])(?:\?[^\s<>]*)?",
+    r"(?P<id>[0-9]{1,25})(?:/video/[1-4])?)"
+    r"(?![\w/])(?:\?[^\s<>]*)?",
     re.I,
 )
 
 GROUP_COMMAND = re.compile(
-    r"download\s+video\s+ini\s+kirim\s+ke\s+(?:(?P<count>4|empat|semua)\s+)?grup"
+    r"download\s+video\s+ini\s+kirim\s+ke\s+"
+    r"(?:(?P<count>4|empat|semua)\s+)?grup"
     r"(?:\s+vip)?(?P<names>(?:\s*:.*|\s+.*)?)",
     re.I,
 )
@@ -43,11 +47,27 @@ CAPTION = re.compile(
     re.I | re.M | re.S,
 )
 
-GROUP_KEYS = ("chil_vip", "indo_premium", "gay_lesby_acak", "full_paket")
+GROUP_KEYS = (
+    "chil_vip",
+    "indo_premium",
+    "gay_lesby_acak",
+    "full_paket",
+)
 
-CODE = r"(?:INDO|GAY|AI(?:\s+VIDEO)?|I\s*VIP|G\s*VIP|A\s*VIP|A1|I2|A3)"
-CODE_LINE = re.compile(rf"{CODE}(?:\s*(?:,|\+|\bdan\b)\s*{CODE})*", re.I)
-CODE_HEAD = re.compile(rf"{CODE}\s*(?:,|\+|\bdan\b)", re.I)
+CODE = (
+    r"(?:INDO|GAY|AI(?:\s+VIDEO)?|I\s*VIP|G\s*VIP|"
+    r"A\s*VIP|A1|I2|A3)"
+)
+
+CODE_LINE = re.compile(
+    rf"{CODE}(?:\s*(?:,|\+|\bdan\b)\s*{CODE})*",
+    re.I,
+)
+
+CODE_HEAD = re.compile(
+    rf"{CODE}\s*(?:,|\+|\bdan\b)",
+    re.I,
+)
 
 TOPIC_CODES = {
     "topic_a1": ("MCM_X_TOPIC_A1_ID", "A1"),
@@ -73,23 +93,49 @@ GROUP_LABELS = {
 
 GROUP_NAMES = {
     "chil_vip": (
-        "ai", "ai hd", "video ai", "video ai hd", "a vip", "avip"
+        "ai",
+        "ai hd",
+        "video ai",
+        "video ai hd",
+        "a vip",
+        "avip",
     ),
     "indo_premium": (
-        "indo", "indo premium", "i vip", "ivip"
+        "indo",
+        "indo premium",
+        "i vip",
+        "ivip",
     ),
     "gay_lesby_acak": (
-        "gl", "g l", "gay lesby", "gay lesby acak",
-        "gay lesbi", "gay lesbi acak",
-        "gay lesbiola", "gay lesbiola acak",
-        "g4y lesbiola", "g4y lesbiola acak",
-        "gay", "lesby", "lesbi", "g4y lesby", "g4y lesby acak"
+        "gl",
+        "g l",
+        "gay lesby",
+        "gay lesby acak",
+        "gay lesbi",
+        "gay lesbi acak",
+        "gay lesbiola",
+        "gay lesbiola acak",
+        "g4y lesbiola",
+        "g4y lesbiola acak",
+        "gay",
+        "lesby",
+        "lesbi",
+        "g4y lesby",
+        "g4y lesby acak",
     ),
     "full_paket": (
-        "toko gen z", "toko genz", "tokogenz",
-        "take all", "take all grup", "takeall"
+        "toko gen z",
+        "toko genz",
+        "tokogenz",
+        "take all",
+        "take all grup",
+        "takeall",
     ),
-    "topic_a1": ("a1", "g vip", "gvip"),
+    "topic_a1": (
+        "a1",
+        "g vip",
+        "gvip",
+    ),
     "topic_i2": ("i2",),
     "topic_a3": ("a3",),
 }
@@ -111,7 +157,12 @@ class Request:
 
 
 def selected_groups(command):
-    names = command.group("names").strip().removeprefix(":").strip()
+    names = (
+        command.group("names")
+        .strip()
+        .removeprefix(":")
+        .strip()
+    )
 
     if command.group("count") and names:
         raise ValueError(
@@ -133,9 +184,19 @@ def selected_names(names):
     }
     targets = []
 
-    for value in re.split(r",|\+|\bdan\b", names, flags=re.I):
-        name = re.sub(r"[\s/_-]+", " ", value.casefold()).strip()
+    for value in re.split(
+        r",|\+|\bdan\b",
+        names,
+        flags=re.I,
+    ):
+        name = re.sub(
+            r"[\s/_-]+",
+            " ",
+            value.casefold(),
+        ).strip()
+
         key = aliases.get(name)
+
         selected = GENRE_TARGETS.get(
             name,
             (key,) if key is not None else (),
@@ -143,7 +204,8 @@ def selected_names(names):
 
         if not selected:
             raise ValueError(
-                "Tujuan belum dikenali, le. Pakai kode INDO, GAY, atau AI. "
+                "Tujuan belum dikenali, le. "
+                "Pakai kode INDO, GAY, atau AI. "
                 "Tulis kode pada baris sebelum caption."
             )
 
@@ -191,11 +253,13 @@ def resolve_routes(targets):
             thread_id = int(value)
             group_key = "full_paket"
 
-        routes.append((
-            GROUP_LABELS[key],
-            VIP_GROUPS[group_key],
-            thread_id,
-        ))
+        routes.append(
+            (
+                GROUP_LABELS[key],
+                VIP_GROUPS[group_key],
+                thread_id,
+            )
+        )
 
     return routes
 
@@ -209,7 +273,9 @@ def parse_request(text):
         return None
 
     if len({match.group("id") for match in links}) != 1:
-        raise ValueError("Kirim satu link unggahan Twitter/X per pesan, le.")
+        raise ValueError(
+            "Kirim satu link unggahan Twitter/X per pesan, le."
+        )
 
     commands = []
 
@@ -219,7 +285,11 @@ def parse_request(text):
 
         if match:
             commands.append(selected_groups(match))
-        elif CODE_LINE.fullmatch(instruction) or CODE_HEAD.match(instruction):
+
+        elif (
+            CODE_LINE.fullmatch(instruction)
+            or CODE_HEAD.match(instruction)
+        ):
             commands.append(selected_names(instruction))
 
     if len(commands) > 1:
@@ -232,7 +302,8 @@ def parse_request(text):
     publish = bool(targets)
 
     if publish and re.search(
-        r"\b(?:jangan|gausah|gakusah|tidak usah)\b.*\b(?:download|unduh|kirim)\b",
+        r"\b(?:jangan|gausah|gakusah|tidak usah)\b"
+        r".*\b(?:download|unduh|kirim)\b",
         header,
         re.I,
     ):
@@ -243,9 +314,13 @@ def parse_request(text):
 
     value = caption.group(1).rstrip() if caption else None
 
-    if value is not None and len(value.encode("utf-16-le")) // 2 > 1024:
+    if (
+        value is not None
+        and len(value.encode("utf-16-le")) // 2 > 1024
+    ):
         raise ValueError(
-            "Caption terlalu panjang, le. Maksimal 1024 karakter Telegram."
+            "Caption terlalu panjang, le. "
+            "Maksimal 1024 karakter Telegram."
         )
 
     return Request(
@@ -261,27 +336,40 @@ class DownloadError(Exception):
 
 
 def x_session_file(folder):
-    """Sesi akun owner hanya disimpan sementara selama pengunduhan."""
-    names = ("MCM_X_AUTH_TOKEN", "MCM_X_CT0")
-    values = [os.environ.get(name, "").strip() for name in names]
+    """Sesi akun milik owner, disimpan sementara selama pengunduhan."""
+    names = (
+        "MCM_X_AUTH_TOKEN",
+        "MCM_X_CT0",
+    )
+    values = [
+        os.environ.get(name, "").strip()
+        for name in names
+    ]
 
     if not any(values):
         return None
 
     if not all(
-        re.fullmatch(r"[A-Za-z0-9._~%+/:=-]{16,4096}", value)
+        re.fullmatch(
+            r"[A-Za-z0-9._~%+/:=-]{16,4096}",
+            value,
+        )
         for value in values
     ):
         raise DownloadError(
             "Sesi X belum lengkap atau formatnya salah, le. "
-            "Isi MCM_X_AUTH_TOKEN dan MCM_X_CT0 langsung di Railway Variables."
+            "Isi MCM_X_AUTH_TOKEN dan MCM_X_CT0 "
+            "langsung di Railway Variables."
         )
 
     path = Path(folder) / ".x-session"
     rows = ["# Netscape HTTP Cookie File"]
 
     for domain in (".x.com", ".twitter.com"):
-        for name, value in zip(("auth_token", "ct0"), values):
+        for name, value in zip(
+            ("auth_token", "ct0"),
+            values,
+        ):
             rows.append(
                 f"{domain}\tTRUE\t/\tTRUE\t0\t{name}\t{value}"
             )
@@ -292,15 +380,31 @@ def x_session_file(folder):
         0o600,
     )
 
-    with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+    with os.fdopen(
+        descriptor,
+        "w",
+        encoding="utf-8",
+    ) as stream:
         stream.write("\n".join(rows) + "\n")
 
     return path
 
 
-def download_failure(stderr, returncode, authenticated, limit_mb):
-    """Kelompokkan error tanpa mencatat stderr mentah."""
-    detail = stderr.decode("utf-8", errors="replace").lower()
+def download_failure(
+    stderr,
+    returncode,
+    authenticated,
+    limit_mb,
+    *,
+    stdout=b"",
+):
+    """Baca kedua keluaran untuk diagnosis tanpa mencetak data mentah."""
+    detail = (
+        stdout + b"\n" + stderr
+    ).decode(
+        "utf-8",
+        errors="replace",
+    ).lower()
 
     if "no module named yt_dlp" in detail:
         code = "DEPENDENCY"
@@ -309,45 +413,88 @@ def download_failure(stderr, returncode, authenticated, limit_mb):
             "Tambahkan di requirements.txt lalu deploy, le."
         )
 
-    elif any(value in detail for value in (
-        "requires authentication",
-        "login required",
-        "sign in to",
-        "not authorized",
-        "http error 401",
-        "protected tweet",
-        "log in to",
-    )):
-        code = "AUTH_REQUIRED"
-        if authenticated:
-            message = (
-                "X belum menerima sesi akun ini atau akunnya tidak diberi akses, le. "
-                "Perbarui sesi dari browser dan pastikan akun itu bisa membuka postingannya."
-            )
-        else:
-            message = (
-                "Postingan ini meminta login X, le. "
-                "Sesi akun X belum dipasang di bot."
-            )
+    elif (
+        "no space left on device" in detail
+        or "disk quota exceeded" in detail
+        or "errno 28" in detail
+    ):
+        code = "DISK_FULL"
+        message = (
+            "Ruang penyimpanan unduhan sudah habis, le. "
+            "Periksa pemakaian disk server dulu."
+        )
 
-    elif "429" in detail or "rate limit" in detail or "too many requests" in detail:
+    elif (
+        "larger than max-filesize" in detail
+        or "max-filesize limit" in detail
+    ):
+        code = "SIZE_LIMIT"
+
+        match = re.search(
+            r"larger than max-filesize\s*\((\d{1,18})\s+bytes",
+            detail,
+        )
+
+        size = (
+            f" sekitar {int(match.group(1)) / 1048576:.1f} MB"
+            if match
+            else ""
+        )
+
+        message = (
+            f"Ukuran videonya{size} melewati batas unduhan "
+            f"{limit_mb} MB, le. Durasi bukan patokannya."
+        )
+
+    elif any(
+        value in detail
+        for value in (
+            "requires authentication",
+            "login required",
+            "sign in to",
+            "not authorized",
+            "http error 401",
+            "protected tweet",
+            "log in to",
+        )
+    ):
+        code = "AUTH_REQUIRED"
+
+        message = (
+            "X belum menerima sesi akun ini atau akunnya "
+            "tidak diberi akses, le. Perbarui sesi dari browser "
+            "dan pastikan akun itu bisa membuka postingannya."
+            if authenticated
+            else "Postingan ini meminta login X, le. "
+            "Sesi akun X belum dipasang di bot."
+        )
+
+    elif (
+        re.search(
+            r"\b(?:http(?:\s+error)?|status(?:\s+code)?)"
+            r"\s*[:=]?\s*429\b",
+            detail,
+        )
+        or "rate limit" in detail
+        or "too many requests" in detail
+    ):
         code = "RATE_LIMIT"
         message = (
             "X sedang membatasi permintaan unduh, le. "
             "Tunggu dulu lalu coba lagi."
         )
 
-    elif "larger than max-filesize" in detail or "max-filesize limit" in detail:
-        code = "SIZE_LIMIT"
-        message = f"Videonya melewati batas {limit_mb} MB, le."
-
     elif "requested format is not available" in detail:
         code = "FORMAT"
         message = (
-            "Format MP4 postingan ini belum bisa diambil oleh pengunduh, le."
+            "Format MP4 postingan ini belum bisa diambil "
+            "oleh pengunduh, le."
         )
 
-    elif "http error 403" in detail or "forbidden" in detail:
+    elif (
+        "http error 403" in detail
+        or "forbidden" in detail
+    ):
         code = "ACCESS_DENIED"
         message = (
             "X menolak akses unduhan dari server ini, le. "
@@ -361,8 +508,16 @@ def download_failure(stderr, returncode, authenticated, limit_mb):
     ):
         code = "NO_VIDEO"
         message = (
-            "Postingannya tidak ditemukan atau tidak memuat video "
-            "yang bisa diambil, le."
+            "Postingannya tidak ditemukan atau tidak memuat "
+            "video yang bisa diambil, le."
+        )
+
+    elif returncode == 101:
+        code = "DOWNLOAD_STOPPED"
+        message = (
+            "Pengunduh berhenti sebelum menghasilkan file video lengkap, le. "
+            "Kode 101 tidak berarti durasi videonya dilarang; "
+            "hasil unduhan perlu diperiksa."
         )
 
     else:
@@ -373,16 +528,18 @@ def download_failure(stderr, returncode, authenticated, limit_mb):
         )
 
     logger.warning(
-        "Unduhan X gagal: kode=%s; exit=%s; sesi=%s",
+        "Unduhan X gagal: kode=%s; exit=%s; sesi=%s; batas_mb=%s",
         code,
         returncode,
         authenticated,
+        limit_mb,
     )
 
     return DownloadError(message)
 
 
 async def download_video(url, folder):
+    """Unduh dengan batas waktu/ukuran dan pembersihan sesi sementara."""
     target = Path(folder) / "video.mp4"
 
     try:
@@ -395,21 +552,32 @@ async def download_video(url, folder):
 
     args = [
         sys.executable,
-        "-m", "yt_dlp",
+        "-m",
+        "yt_dlp",
         "--ignore-config",
         "--no-plugin-dirs",
         "--no-cache-dir",
         "--no-warnings",
         "--no-progress",
-        "--socket-timeout", "15",
-        "--retries", "1",
-        "--fragment-retries", "1",
-        "--playlist-items", "1",
-        "--max-downloads", "1",
-        "--max-filesize", str(limit),
+        "--socket-timeout",
+        "15",
+        "--retries",
+        "1",
+        "--fragment-retries",
+        "1",
+        "--playlist-items",
+        "1",
+        "--max-downloads",
+        "1",
+        "--max-filesize",
+        str(limit),
         "--format",
-        f"best[ext=mp4][protocol=https][filesize<=?{limit}]/bestvideo[ext=mp4][protocol=https][filesize<=?{limit}]",
-        "--output", str(Path(folder) / "video.%(ext)s"),
+        (
+            f"best[ext=mp4][protocol=https][filesize<=?{limit}]"
+            f"/bestvideo[ext=mp4][protocol=https][filesize<=?{limit}]"
+        ),
+        "--output",
+        str(Path(folder) / "video.%(ext)s"),
     ]
 
     if session is not None:
@@ -418,11 +586,14 @@ async def download_video(url, folder):
     args.extend(["--", url])
 
     environment = dict(os.environ)
-
-    for name in ("MCM_X_AUTH_TOKEN", "MCM_X_CT0"):
+    for name in (
+        "MCM_X_AUTH_TOKEN",
+        "MCM_X_CT0",
+    ):
         environment.pop(name, None)
 
-    process = reader = None
+    process = None
+    reader = None
 
     try:
         process = await asyncio.create_subprocess_exec(
@@ -432,19 +603,28 @@ async def download_video(url, folder):
             env=environment,
         )
 
-        reader = asyncio.create_task(process.communicate())
+        reader = asyncio.create_task(
+            process.communicate()
+        )
+
         deadline = (
             asyncio.get_running_loop().time()
             + (1800 if local_enabled() else 120)
         )
 
         while not reader.done():
-            await asyncio.wait((reader,), timeout=0.5)
-            size = 0
+            await asyncio.wait(
+                (reader,),
+                timeout=0.5,
+            )
 
+            size = 0
             for path in Path(folder).iterdir():
                 try:
-                    if path != session and path.is_file():
+                    if (
+                        path != session
+                        and path.is_file()
+                    ):
                         size += path.stat().st_size
                 except FileNotFoundError:
                     pass
@@ -463,10 +643,11 @@ async def download_video(url, folder):
 
             if asyncio.get_running_loop().time() >= deadline:
                 raise DownloadError(
-                    "Unduhannya kehabisan waktu, le. Coba lagi nanti."
+                    "Unduhannya kehabisan waktu, le. "
+                    "Coba lagi nanti."
                 )
 
-        _, stderr = await reader
+        stdout, stderr = await reader
 
         if (
             process.returncode not in (0, 101)
@@ -478,6 +659,7 @@ async def download_video(url, folder):
                 process.returncode,
                 session is not None,
                 limit_mb,
+                stdout=stdout,
             )
 
         if target.stat().st_size > limit:
@@ -493,12 +675,17 @@ async def download_video(url, folder):
                 process.kill()
             except ProcessLookupError:
                 pass
+
             await process.wait()
 
         if reader is not None:
             if not reader.done():
                 reader.cancel()
-            await asyncio.gather(reader, return_exceptions=True)
+
+            await asyncio.gather(
+                reader,
+                return_exceptions=True,
+            )
 
         if session is not None:
             session.unlink(missing_ok=True)
@@ -521,8 +708,7 @@ class UnduhX:
                     message_id INTEGER NOT NULL,
                     mode TEXT NOT NULL,
                     state TEXT NOT NULL,
-                    PRIMARY KEY(bot_id,owner_id,message_id)
-                );
+                    PRIMARY KEY(bot_id,owner_id,message_id));
 
                 CREATE TABLE IF NOT EXISTS mcm_x_targets (
                     bot_id INTEGER NOT NULL,
@@ -531,8 +717,7 @@ class UnduhX:
                     target_id INTEGER NOT NULL,
                     state TEXT NOT NULL,
                     sent_message_id INTEGER,
-                    PRIMARY KEY(bot_id,owner_id,message_id,target_id)
-                );
+                    PRIMARY KEY(bot_id,owner_id,message_id,target_id));
 
                 CREATE TABLE IF NOT EXISTS mcm_x_routes (
                     bot_id INTEGER NOT NULL,
@@ -544,13 +729,12 @@ class UnduhX:
                     sent_message_id INTEGER,
                     PRIMARY KEY(
                         bot_id,owner_id,message_id,target_id,thread_id
-                    )
-                );
+                    ));
 
                 INSERT OR IGNORE INTO mcm_x_routes
                     SELECT
-                        bot_id,owner_id,message_id,
-                        target_id,0,state,sent_message_id
+                        bot_id,owner_id,message_id,target_id,
+                        0,state,sent_message_id
                     FROM mcm_x_targets;
             """)
 
@@ -582,7 +766,8 @@ class UnduhX:
             RELAY_COMMAND.match(text)
             or self.c.qris_setup(context.bot.id)
             or re.search(
-                r"\b(?:jangan|gausah|gakusah|tidak usah)\b.*\b(?:download|unduh)\b",
+                r"\b(?:jangan|gausah|gakusah|tidak usah)\b"
+                r".*\b(?:download|unduh)\b",
                 text,
                 re.I,
             )
@@ -592,13 +777,20 @@ class UnduhX:
         try:
             request = parse_request(text)
         except ValueError as error:
-            await m.reply_text(str(error), parse_mode=None)
+            await m.reply_text(
+                str(error),
+                parse_mode=None,
+            )
             return
 
         if request is None:
             return await self.c.private_text(update, context)
 
-        key = (context.bot.id, m.from_user.id, m.message_id)
+        key = (
+            context.bot.id,
+            m.from_user.id,
+            m.message_id,
+        )
 
         with self.store.lock:
             previous = self.store.connection.execute(
@@ -628,9 +820,14 @@ class UnduhX:
                 if request.publish
                 else [("Chat pribadi", m.chat.id, None)]
             )
+
         except ValueError as error:
-            await m.reply_text(str(error), parse_mode=None)
+            await m.reply_text(
+                str(error),
+                parse_mode=None,
+            )
             return
+
         except KeyError:
             await m.reply_text(
                 "Konfigurasi grup VIP tujuan belum lengkap, le."
@@ -649,7 +846,8 @@ class UnduhX:
         ):
             await m.reply_text(
                 "Periksa ID grup tujuan dulu, le. "
-                "Setiap tujuan harus berbeda dan tidak boleh grup MCB utama."
+                "Setiap tujuan harus berbeda "
+                "dan tidak boleh grup MCB utama."
             )
             return
 
@@ -670,7 +868,13 @@ class UnduhX:
         self.active_key = key
 
         task = asyncio.create_task(
-            self.run(m, context.bot, request, groups, key)
+            self.run(
+                m,
+                context.bot,
+                request,
+                groups,
+                key,
+            )
         )
         self.tasks.add(task)
         task.add_done_callback(self.finished)
@@ -694,15 +898,24 @@ class UnduhX:
                         name for name, _, _ in groups
                     )
 
-                await message.reply_text(text, parse_mode=None)
+                await message.reply_text(
+                    text,
+                    parse_mode=None,
+                )
 
             except TelegramError:
                 pass
 
-            with tempfile.TemporaryDirectory(prefix="mcm-x-") as folder:
-                path = await self.downloader(request.url, folder)
-                results, file_id = [], None
+            with tempfile.TemporaryDirectory(
+                prefix="mcm-x-"
+            ) as folder:
+                path = await self.downloader(
+                    request.url,
+                    folder,
+                )
 
+                results = []
+                file_id = None
                 self.state(key, "sending")
 
                 for name, group_id, thread_id in groups:
@@ -758,6 +971,7 @@ class UnduhX:
                                     video=path.resolve(),
                                     **kwargs,
                                 )
+
                             else:
                                 with path.open("rb") as video:
                                     sent = await bot.send_video(
@@ -768,6 +982,7 @@ class UnduhX:
                                         ),
                                         **kwargs,
                                     )
+
                         else:
                             sent = await bot.send_video(
                                 video=file_id,
@@ -822,18 +1037,14 @@ class UnduhX:
                             else "chat ini"
                         )
 
-                        if state == "uncertain":
-                            reason = (
-                                f"hasil kirim belum pasti; "
-                                f"cek {place} dulu"
+                        results.append(
+                            f"⚠️ {name}: "
+                            + (
+                                f"hasil kirim belum pasti; cek {place} dulu"
+                                if state == "uncertain"
+                                else "Telegram menolak kiriman; periksa izin bot"
                             )
-                        else:
-                            reason = (
-                                "Telegram menolak kiriman; "
-                                "periksa izin bot"
-                            )
-
-                        results.append(f"⚠️ {name}: {reason}")
+                        )
 
                         logger.warning(
                             "Kiriman Twitter/X tertunda: jenis=%s",
@@ -867,10 +1078,8 @@ class UnduhX:
             await message.reply_text(
                 str(error)
                 if isinstance(error, DownloadError)
-                else (
-                    "Unduhan belum berhasil diproses "
-                    "di server, le. Coba lagi nanti."
-                ),
+                else "Unduhan belum berhasil diproses di server, le. "
+                "Coba lagi nanti.",
                 parse_mode=None,
             )
 
@@ -890,11 +1099,18 @@ class UnduhX:
         for task in tasks:
             task.cancel()
 
-        await asyncio.gather(*tasks, return_exceptions=True)
+        await asyncio.gather(
+            *tasks,
+            return_exceptions=True,
+        )
+
         self.tasks.clear()
 
         if self.active_key is not None:
-            self.state(self.active_key, "interrupted")
+            self.state(
+                self.active_key,
+                "interrupted",
+            )
             self.active_key = None
 
         self.busy = False
