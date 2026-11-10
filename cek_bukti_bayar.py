@@ -155,14 +155,23 @@ class CekBuktiBayar:
         return InlineKeyboardMarkup([[InlineKeyboardButton("Hubungi admin", url=CONTACT)]])
 
     def notice(self, status, order_id):
-        action = ("Pengajuan bukti ini ditolak dari proses otomatis."
-                  if status in ("late", "different_day", "future") else
-                  "Pengajuan bukti ini belum dapat diproses otomatis.")
+        if status in ("late", "different_day", "future"):
+            message = (
+                "Maaf, bukti bayarnya belum bisa diproses otomatis. "
+                "Bukti harus dikirim di hari pembayaran (WIB), "
+                "maksimal 30 menit setelah transaksi."
+            )
+        else:
+            message = {
+                "unreadable": "Maaf, tanggal/jam transaksi pada bukti belum dapat dibaca dengan jelas.",
+                "unavailable": "Maaf, pengecekan bukti bayar sedang terkendala.",
+                "checking": "Maaf, pengecekan bukti bayar belum selesai.",
+                "legacy": "Maaf, bukti bayarnya perlu diperiksa manual terlebih dahulu.",
+            }.get(status, "Maaf, bukti bayarnya perlu diperiksa manual terlebih dahulu.")
         return (
-            f"Pesanan: {order_id}\n\n{REASONS.get(status, REASONS['unreadable'])}\n"
-            f"{action} Harap pastikan tanggal transaksi "
-            "sesuai hari pengiriman dalam WIB dan bukti dikirim maksimal 30 menit setelah pembayaran.\n\n"
-            f"Jika sudah transfer, jangan bayar ulang. Hubungi admin untuk pengecekan manual: {CONTACT}"
+            f"Halo, Pak Bos 👋\n\n{message}\n\n"
+            "Kalau sudah transfer, jangan bayar ulang, ya. "
+            "Hubungi @Madamselin untuk pengecekan manual."
         )
 
     async def ask_proof(self, message, order, *, name_only=False):
