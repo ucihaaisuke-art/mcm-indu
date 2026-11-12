@@ -286,8 +286,8 @@ class GanjarParodi:
 
             try:
                 await bot.set_my_short_description(
-                    "Bot AI parodi fiktif. Bukan Ganjar Pranowo asli "
-                    "atau akun resmi."
+                    "H. Ganjar Pranowo, S.H., M.IP. ( "
+                    "Politikus Indonesia."
                 )
             except TelegramError:
                 log.warning(
